@@ -1,5 +1,6 @@
-"""7-stage RFP evaluation pipeline powered by Google Gemini."""
+"""7-stage RFP evaluation pipeline powered by Groq (llama-3.3-70b-versatile)."""
 
+import asyncio
 import json
 import os
 import re
@@ -23,8 +24,10 @@ from models import (
 
 load_dotenv()
 
-MODEL_NAME = "llama-3.3-70b-versatile"
-MAX_TEXT_CHARS = 8_000
+MODEL_NAME    = "llama-3.1-8b-instant"   # 500K tokens/day free (vs 100K for 70b)
+MAX_RFP_CHARS  = 14_000   # smart-filtered RFP text sent for rule extraction
+MAX_BID_CHARS  = 10_000   # smart-filtered bid text sent for criterion evaluation
+MAX_DISQ_CHARS =  7_000   # smart-filtered bid text sent for disqualifier check
 
 SYSTEM = (
     "You are an expert RFP (Request for Proposal) / Tender Evaluation Assistant. "
@@ -45,26 +48,37 @@ def get_client() -> AsyncGroq:
     return _client
 
 
-async def _call(prompt: str) -> str:
-    resp = await get_client().chat.completions.create(
-        model=MODEL_NAME,
-        messages=[
-            {"role": "system", "content": SYSTEM},
-            {"role": "user", "content": prompt},
-        ],
-        temperature=0.1,
-        max_tokens=8192,
-    )
-    return resp.choices[0].message.content
+async def _call(prompt: str, max_retries: int = 4) -> str:
+    """Call Groq with exponential backoff on rate-limit (429) errors."""
+    for attempt in range(max_retries):
+        try:
+            resp = await get_client().chat.completions.create(
+                model=MODEL_NAME,
+                messages=[
+                    {"role": "system", "content": SYSTEM},
+                    {"role": "user",   "content": prompt},
+                ],
+                temperature=0.1,
+                max_tokens=8192,
+            )
+            return resp.choices[0].message.content
+        except Exception as exc:
+            if attempt < max_retries - 1 and (
+                "429" in str(exc) or "rate" in str(exc).lower()
+            ):
+                wait = 30 * (2 ** attempt)   # 30s, 60s, 120s
+                await asyncio.sleep(wait)
+            else:
+                raise
 
 
 # ---------------------------------------------------------------------------
-# JSON extraction helpers
+# JSON helpers
 # ---------------------------------------------------------------------------
 
 def _clean(text: str) -> str:
     text = re.sub(r"```json\s*", "", text)
-    text = re.sub(r"```\s*", "", text)
+    text = re.sub(r"```\s*",     "", text)
     return text.strip()
 
 
@@ -81,7 +95,7 @@ def _parse_array(text: str) -> list:
 
 
 # ---------------------------------------------------------------------------
-# Scoring-section extractor — scans full document for relevant paragraphs
+# Smart extractors — scan the full document, return only relevant paragraphs
 # ---------------------------------------------------------------------------
 
 _SCORING_KEYWORDS = [
@@ -94,7 +108,7 @@ _SCORING_KEYWORDS = [
 
 
 def _extract_scoring_sections(text: str, max_chars: int) -> str:
-    """Return the most scoring-relevant paragraphs from the full document."""
+    """Return the most scoring-relevant paragraphs from the RFP."""
     lines = text.splitlines()
     scored: list[tuple[int, int, str]] = []
 
@@ -103,7 +117,7 @@ def _extract_scoring_sections(text: str, max_chars: int) -> str:
         hits = sum(1 for kw in _SCORING_KEYWORDS if kw in ll)
         if hits:
             start = max(0, i - 1)
-            end = min(len(lines), i + 4)
+            end   = min(len(lines), i + 4)
             scored.append((hits, i, "\n".join(lines[start:end])))
 
     scored.sort(key=lambda x: -x[0])
@@ -120,8 +134,56 @@ def _extract_scoring_sections(text: str, max_chars: int) -> str:
 
     result.sort(key=lambda x: x[0])
     extracted = "\n".join(b for _, b in result)
-    # Fall back to the beginning of the document if nothing matched
     return extracted if extracted.strip() else text[:max_chars]
+
+
+def _extract_bid_sections(bid_text: str, criteria_list: list, max_chars: int) -> str:
+    """Return bid paragraphs most relevant to the criteria being evaluated.
+
+    Builds a keyword set from criterion names so evidence buried anywhere in
+    the document is surfaced — not just the first N characters.
+    """
+    keywords: set[str] = set()
+    for c in criteria_list:
+        name = c.get("criterion", "").lower()
+        keywords.update(w.strip("(),.:;-") for w in name.split() if len(w) > 3)
+
+    # General evidence keywords common in bid documents
+    keywords.update([
+        "experience", "project", "years", "turnover", "revenue", "annual",
+        "crore", "lakh", "team", "delivered", "completed", "implemented",
+        "developed", "certified", "empanelled", "registered", "client",
+        "customer", "reference", "case study", "production", "deployment",
+        "solution", "system", "platform", "award", "contract", "government",
+        "bfsi", "banking", "financial", "insurance", "genai", "llm", "ai",
+    ])
+
+    lines = bid_text.splitlines()
+    scored: list[tuple[int, int, str]] = []
+
+    for i, line in enumerate(lines):
+        ll = line.lower()
+        hits = sum(1 for kw in keywords if kw in ll)
+        if hits:
+            start = max(0, i - 2)
+            end   = min(len(lines), i + 5)   # wider context window for bids
+            scored.append((hits, i, "\n".join(lines[start:end])))
+
+    scored.sort(key=lambda x: -x[0])
+
+    seen: set[int] = set()
+    result: list[tuple[int, str]] = []
+    total = 0
+
+    for hits, idx, block in scored:
+        if idx not in seen and total + len(block) <= max_chars:
+            seen.add(idx)
+            result.append((idx, block))
+            total += len(block)
+
+    result.sort(key=lambda x: x[0])
+    extracted = "\n".join(b for _, b in result)
+    return extracted if extracted.strip() else bid_text[:max_chars]
 
 
 # ---------------------------------------------------------------------------
@@ -129,7 +191,7 @@ def _extract_scoring_sections(text: str, max_chars: int) -> str:
 # ---------------------------------------------------------------------------
 
 async def stage2_extract_rules(rfp_text: str) -> EvaluationRules:
-    relevant_text = _extract_scoring_sections(rfp_text, MAX_TEXT_CHARS)
+    relevant_text = _extract_scoring_sections(rfp_text, MAX_RFP_CHARS)
 
     prompt = f"""Extract ALL scoring criteria from this RFP/Tender document. Scoring may be distributed across sections — not necessarily in one table. Look for marks, percentages, weightages, points, or evaluation parameters anywhere in the text. Infer sub-criteria from descriptions even without explicit marks.
 
@@ -191,10 +253,13 @@ async def stage3_parse_vendor_response(
                  "max_marks": cat.max_marks, "mandatory": False}
             )
 
+    # Smart extraction: surface evidence relevant to the criteria, anywhere in the doc
+    relevant_bid = _extract_bid_sections(bid_text, criteria_list, MAX_BID_CHARS)
+
     prompt = f"""Evaluate the vendor bid document below against each criterion listed.
 
-VENDOR BID:
-{bid_text[:MAX_TEXT_CHARS]}
+VENDOR BID (evidence-relevant sections — full document has been scanned):
+{relevant_bid}
 
 CRITERIA TO EVALUATE:
 {json.dumps(criteria_list, indent=2)}
@@ -255,7 +320,7 @@ def stage4_calculate_scores(
                 break
 
         cat_passed = pct >= min_pct if min_pct is not None else True
-        weighted = round((marks_awarded / cat.max_marks) * cat.weight_percent, 2) if cat.max_marks else 0.0
+        weighted   = round((marks_awarded / cat.max_marks) * cat.weight_percent, 2) if cat.max_marks else 0.0
 
         category_results.append(
             CategoryResult(
@@ -284,10 +349,14 @@ async def stage4b_check_disqualifiers(
     if not disqualifiers:
         return []
 
+    # Smart extraction using disqualifier keywords
+    disq_criteria = [{"criterion": d} for d in disqualifiers]
+    relevant_bid  = _extract_bid_sections(bid_text, disq_criteria, MAX_DISQ_CHARS)
+
     prompt = f"""Check whether the vendor bid meets each mandatory requirement listed below.
 
-VENDOR BID:
-{bid_text[:MAX_TEXT_CHARS]}
+VENDOR BID (relevant sections):
+{relevant_bid}
 
 MANDATORY REQUIREMENTS:
 {json.dumps(disqualifiers, indent=2)}
@@ -381,14 +450,14 @@ async def run_full_evaluation(rfp_text: str, bid_text: str) -> EvaluationReport:
     if not rules.scoring_categories:
         raise ValueError("NO_RULES_FOUND")
 
-    criteria_evals    = await stage3_parse_vendor_response(bid_text, rules)
-    category_results  = stage4_calculate_scores(criteria_evals, rules)
+    criteria_evals      = await stage3_parse_vendor_response(bid_text, rules)
+    category_results    = stage4_calculate_scores(criteria_evals, rules)
     disqualifier_checks = await stage4b_check_disqualifiers(
         bid_text, rules.mandatory_disqualifiers
     )
 
-    failed_disqs = [d for d in disqualifier_checks if not d.met]
-    disqualified = bool(failed_disqs)
+    failed_disqs            = [d for d in disqualifier_checks if not d.met]
+    disqualified            = bool(failed_disqs)
     disqualification_reason = failed_disqs[0].condition if disqualified else None
 
     total_score = round(sum(cr.weighted_score for cr in category_results), 2)
