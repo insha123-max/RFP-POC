@@ -6,8 +6,7 @@ import re
 from typing import List, Optional
 
 from dotenv import load_dotenv
-from google import genai
-from google.genai import types
+from groq import AsyncGroq
 
 from models import (
     CategoryMinimum,
@@ -24,8 +23,8 @@ from models import (
 
 load_dotenv()
 
-MODEL_NAME = "gemini-1.5-flash"
-MAX_TEXT_CHARS = 80_000
+MODEL_NAME = "llama-3.3-70b-versatile"
+MAX_TEXT_CHARS = 8_000
 
 SYSTEM = (
     "You are an expert RFP (Request for Proposal) / Tender Evaluation Assistant. "
@@ -36,29 +35,27 @@ SYSTEM = (
     "If something is not found in the document, state 'Not found in document' and score it 0."
 )
 
-_GEN_CONFIG = types.GenerateContentConfig(
-    system_instruction=SYSTEM,
-    temperature=0.1,
-    max_output_tokens=8192,
-)
-
-_client: Optional[genai.Client] = None
+_client: Optional[AsyncGroq] = None
 
 
-def get_client() -> genai.Client:
+def get_client() -> AsyncGroq:
     global _client
     if _client is None:
-        _client = genai.Client(api_key=os.environ["GOOGLE_API_KEY"])
+        _client = AsyncGroq(api_key=os.environ["GROQ_API_KEY"])
     return _client
 
 
 async def _call(prompt: str) -> str:
-    resp = await get_client().aio.models.generate_content(
+    resp = await get_client().chat.completions.create(
         model=MODEL_NAME,
-        contents=prompt,
-        config=_GEN_CONFIG,
+        messages=[
+            {"role": "system", "content": SYSTEM},
+            {"role": "user", "content": prompt},
+        ],
+        temperature=0.1,
+        max_tokens=8192,
     )
-    return resp.text
+    return resp.choices[0].message.content
 
 
 # ---------------------------------------------------------------------------
@@ -84,39 +81,65 @@ def _parse_array(text: str) -> list:
 
 
 # ---------------------------------------------------------------------------
+# Scoring-section extractor — scans full document for relevant paragraphs
+# ---------------------------------------------------------------------------
+
+_SCORING_KEYWORDS = [
+    "marks", "score", "scoring", "criteria", "criterion", "evaluation",
+    "weightage", "weight", "points", "rating", "percent", "%", "technical",
+    "financial", "mandatory", "eligible", "qualification", "experience",
+    "turnover", "empanelment", "bid", "tender", "proposal", "parameter",
+    "maximum", "minimum", "pass", "threshold", "disqualif",
+]
+
+
+def _extract_scoring_sections(text: str, max_chars: int) -> str:
+    """Return the most scoring-relevant paragraphs from the full document."""
+    lines = text.splitlines()
+    scored: list[tuple[int, int, str]] = []
+
+    for i, line in enumerate(lines):
+        ll = line.lower()
+        hits = sum(1 for kw in _SCORING_KEYWORDS if kw in ll)
+        if hits:
+            start = max(0, i - 1)
+            end = min(len(lines), i + 4)
+            scored.append((hits, i, "\n".join(lines[start:end])))
+
+    scored.sort(key=lambda x: -x[0])
+
+    seen: set[int] = set()
+    result: list[tuple[int, str]] = []
+    total = 0
+
+    for hits, idx, block in scored:
+        if idx not in seen and total + len(block) <= max_chars:
+            seen.add(idx)
+            result.append((idx, block))
+            total += len(block)
+
+    result.sort(key=lambda x: x[0])
+    extracted = "\n".join(b for _, b in result)
+    # Fall back to the beginning of the document if nothing matched
+    return extracted if extracted.strip() else text[:max_chars]
+
+
+# ---------------------------------------------------------------------------
 # Stage 2 — Rule & Criteria Extraction
 # ---------------------------------------------------------------------------
 
 async def stage2_extract_rules(rfp_text: str) -> EvaluationRules:
-    prompt = f"""Analyze the RFP/Tender document below and extract ALL scoring rules, evaluation criteria, and thresholds.
+    relevant_text = _extract_scoring_sections(rfp_text, MAX_TEXT_CHARS)
 
-RFP DOCUMENT:
-{rfp_text[:MAX_TEXT_CHARS]}
+    prompt = f"""Extract ALL scoring criteria from this RFP/Tender document. Scoring may be distributed across sections — not necessarily in one table. Look for marks, percentages, weightages, points, or evaluation parameters anywhere in the text. Infer sub-criteria from descriptions even without explicit marks.
 
-Return ONLY a JSON object with this exact structure (no extra keys):
-{{
-  "rules_found": true,
-  "scoring_categories": [
-    {{
-      "category": "Category name",
-      "max_marks": 70,
-      "weight_percent": 70,
-      "subcriteria": [
-        {{"criterion": "Criterion name", "max_marks": 10, "mandatory": true}}
-      ]
-    }}
-  ],
-  "threshold": {{
-    "overall_pass_mark": 70,
-    "category_minimums": [
-      {{"category": "Technical Score", "minimum_percent": 70}}
-    ]
-  }},
-  "mandatory_disqualifiers": ["condition that auto-fails the bid"]
-}}
+RFP (scoring-relevant sections):
+{relevant_text}
 
-If NO scoring rules exist in the document return:
-{{"rules_found": false, "scoring_categories": [], "threshold": {{"overall_pass_mark": 0, "category_minimums": []}}, "mandatory_disqualifiers": []}}"""
+Return ONLY JSON:
+{{"rules_found":true,"scoring_categories":[{{"category":"Name","max_marks":70,"weight_percent":70,"subcriteria":[{{"criterion":"Name","max_marks":10,"mandatory":false}}]}}],"threshold":{{"overall_pass_mark":70,"category_minimums":[{{"category":"Technical Score","minimum_percent":70}}]}},"mandatory_disqualifiers":["condition"]}}
+
+Set rules_found=false only if there is absolutely no scoring information."""
 
     data = _parse_object(await _call(prompt))
 
@@ -264,7 +287,7 @@ async def stage4b_check_disqualifiers(
     prompt = f"""Check whether the vendor bid meets each mandatory requirement listed below.
 
 VENDOR BID:
-{bid_text[:60_000]}
+{bid_text[:MAX_TEXT_CHARS]}
 
 MANDATORY REQUIREMENTS:
 {json.dumps(disqualifiers, indent=2)}
@@ -355,7 +378,7 @@ Return ONLY the summary text — no JSON, no headers."""
 async def run_full_evaluation(rfp_text: str, bid_text: str) -> EvaluationReport:
     rules = await stage2_extract_rules(rfp_text)
 
-    if not rules.rules_found or not rules.scoring_categories:
+    if not rules.scoring_categories:
         raise ValueError("NO_RULES_FOUND")
 
     criteria_evals    = await stage3_parse_vendor_response(bid_text, rules)
