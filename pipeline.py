@@ -26,7 +26,7 @@ load_dotenv()
 
 MODEL_NAME    = "llama-3.1-8b-instant"   # 500K tokens/day free (vs 100K for 70b)
 MAX_RFP_CHARS  = 14_000   # smart-filtered RFP text sent for rule extraction
-MAX_BID_CHARS  = 10_000   # smart-filtered bid text sent for criterion evaluation
+MAX_BID_CHARS  =  3_500   # smart-filtered bid text sent per category evaluation call
 MAX_DISQ_CHARS =  7_000   # smart-filtered bid text sent for disqualifier check
 
 SYSTEM = (
@@ -59,7 +59,7 @@ async def _call(prompt: str, max_retries: int = 4) -> str:
                     {"role": "user",   "content": prompt},
                 ],
                 temperature=0.1,
-                max_tokens=8192,
+                max_tokens=4096,
             )
             return resp.choices[0].message.content
         except Exception as exc:
@@ -85,13 +85,53 @@ def _clean(text: str) -> str:
 def _parse_object(text: str) -> dict:
     text = _clean(text)
     match = re.search(r"\{.*\}", text, re.DOTALL)
-    return json.loads(match.group() if match else text)
+    candidate = match.group() if match else text
+    try:
+        return json.loads(candidate)
+    except json.JSONDecodeError:
+        # Try truncating at the last complete key-value pair
+        last_comma = candidate.rfind(",")
+        if last_comma > 0:
+            try:
+                return json.loads(candidate[:last_comma] + "}")
+            except json.JSONDecodeError:
+                pass
+        return {}
+
+
+def _extract_complete_objects(text: str) -> list:
+    """Extract all syntactically complete {...} objects from potentially malformed JSON."""
+    objects = []
+    depth = 0
+    start = None
+    for i, ch in enumerate(text):
+        if ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0 and start is not None:
+                try:
+                    objects.append(json.loads(text[start : i + 1]))
+                except json.JSONDecodeError:
+                    pass
+                start = None
+    return objects
 
 
 def _parse_array(text: str) -> list:
     text = _clean(text)
     match = re.search(r"\[.*\]", text, re.DOTALL)
-    return json.loads(match.group() if match else text)
+    candidate = match.group() if match else text
+    try:
+        return json.loads(candidate)
+    except json.JSONDecodeError:
+        # Salvage all complete {...} objects from the broken response
+        objects = _extract_complete_objects(candidate)
+        if objects:
+            return objects
+        return []
 
 
 # ---------------------------------------------------------------------------
@@ -238,57 +278,71 @@ Set rules_found=false only if there is absolutely no scoring information."""
 async def stage3_parse_vendor_response(
     bid_text: str, rules: EvaluationRules
 ) -> List[CriterionEvaluation]:
-    criteria_list = []
+    """Evaluate each scoring category separately so bid extraction is focused."""
+    all_evals: List[CriterionEvaluation] = []
+
     for cat in rules.scoring_categories:
+        # Build criteria list for this category only
+        criteria_list = []
         if cat.subcriteria:
             for sub in cat.subcriteria:
-                criteria_list.append(
-                    {"category": cat.category, "criterion": sub.criterion,
-                     "max_marks": sub.max_marks, "mandatory": sub.mandatory}
-                )
+                criteria_list.append({
+                    "category": cat.category, "criterion": sub.criterion,
+                    "max_marks": sub.max_marks, "mandatory": sub.mandatory,
+                })
         else:
-            criteria_list.append(
-                {"category": cat.category,
-                 "criterion": f"{cat.category} — overall assessment",
-                 "max_marks": cat.max_marks, "mandatory": False}
-            )
+            criteria_list.append({
+                "category": cat.category,
+                "criterion": f"{cat.category} — overall assessment",
+                "max_marks": cat.max_marks, "mandatory": False,
+            })
 
-    # Smart extraction: surface evidence relevant to the criteria, anywhere in the doc
-    relevant_bid = _extract_bid_sections(bid_text, criteria_list, MAX_BID_CHARS)
+        # Extract bid sections most relevant to THIS category's criteria
+        relevant_bid = _extract_bid_sections(bid_text, criteria_list, MAX_BID_CHARS)
 
-    prompt = f"""Evaluate the vendor bid document below against each criterion listed.
+        prompt = f"""Evaluate the vendor bid against these criteria for the "{cat.category}" category.
 
-VENDOR BID (evidence-relevant sections — full document has been scanned):
+VENDOR BID (sections most relevant to {cat.category}):
 {relevant_bid}
 
 CRITERIA TO EVALUATE:
 {json.dumps(criteria_list, indent=2)}
 
-For every criterion find the relevant content in the bid and assess it.
+Rules:
+- "Met"     → vendor explicitly satisfies the criterion with clear evidence — quote it.
+- "Partial" → vendor mentions or demonstrates a related capability but doesn't fully meet it.
+- "Not Met" → no relevant evidence found anywhere in the bid.
+- Use "Partial" generously when the vendor shows related work or capability.
 
-Return ONLY a JSON array — one object per criterion — with this structure:
+Return ONLY a JSON array — one object per criterion:
 [
   {{
-    "criterion": "<exact criterion name from the list>",
-    "category": "<category name>",
+    "criterion": "<exact name from list>",
+    "category": "<category>",
     "max_marks": <number>,
-    "vendor_claim": "<the specific statement or evidence from the bid, or 'Not found in document'>",
-    "source_reference": "<Section X / Page Y or 'Not found'>",
+    "vendor_claim": "<direct quote or description from bid, or 'Not found in document'>",
+    "source_reference": "<Section/Page or 'Not found'>",
     "compliance_status": "Met|Partial|Not Met",
     "confidence": "High|Medium|Low",
-    "justification": "<one sentence why you chose this status>",
+    "justification": "<one sentence>",
     "is_mandatory": <true|false>
   }}
-]
+]"""
 
-Rules:
-- "Met"     → vendor fully satisfies the criterion
-- "Partial" → vendor partially addresses it
-- "Not Met" → vendor does not address it at all
-Never invent evidence. If not found, use "Not Met" and vendor_claim "Not found in document"."""
+        try:
+            items = _parse_array(await _call(prompt))
+            all_evals.extend([CriterionEvaluation(**item) for item in items])
+        except Exception:
+            for c in criteria_list:
+                all_evals.append(CriterionEvaluation(
+                    criterion=c["criterion"], category=c["category"],
+                    max_marks=c["max_marks"], vendor_claim="Evaluation error",
+                    source_reference="Not found", compliance_status="Not Met",
+                    confidence="Low", justification="Parsing failed for this category.",
+                    is_mandatory=c.get("mandatory", False),
+                ))
 
-    items = _parse_array(await _call(prompt))
-    return [CriterionEvaluation(**item) for item in items]
+    return all_evals
 
 
 # ---------------------------------------------------------------------------
@@ -319,7 +373,11 @@ def stage4_calculate_scores(
                 min_pct = cm.minimum_percent
                 break
 
-        cat_passed = pct >= min_pct if min_pct is not None else True
+        if min_pct is not None:
+            cat_passed = pct >= min_pct
+        else:
+            # No category minimum set — pass unless the category scored absolute zero
+            cat_passed = pct > 0
         weighted   = round((marks_awarded / cat.max_marks) * cat.weight_percent, 2) if cat.max_marks else 0.0
 
         category_results.append(
