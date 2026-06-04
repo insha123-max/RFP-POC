@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RFP Evaluator — AI-Powered Tender Scoring</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<header>
+  <div class="header-inner">
+    <div class="logo">&#9878; RFP Evaluator</div>
+    <p class="tagline">Automated Tender Evaluation System &mdash; Powered by Claude AI</p>
+  </div>
+</header>
+
+<main>
+
+  <!-- ── Upload Section ────────────────────────────────────────────────── -->
+  <section class="card" id="upload-section">
+    <h2>&#128196; Upload Documents</h2>
+
+    <div class="upload-grid">
+
+      <div class="upload-zone" id="rfp-zone" data-target="rfp-input">
+        <div class="upload-icon">&#128203;</div>
+        <h3>RFP / Tender Document</h3>
+        <p>Upload the RFP that contains the evaluation criteria and scoring rules</p>
+        <label class="upload-btn" for="rfp-input">Browse Files</label>
+        <input type="file" id="rfp-input" accept=".pdf,.doc,.docx" hidden />
+        <p class="file-hint">PDF &middot; DOC &middot; DOCX</p>
+        <div class="file-name" id="rfp-name"></div>
+      </div>
+
+      <div class="vs-badge">VS</div>
+
+      <div class="upload-zone" id="bid-zone" data-target="bid-input">
+        <div class="upload-icon">&#128221;</div>
+        <h3>Vendor Bid Document</h3>
+        <p>Upload the vendor&rsquo;s response or bid that will be evaluated</p>
+        <label class="upload-btn" for="bid-input">Browse Files</label>
+        <input type="file" id="bid-input" accept=".pdf,.doc,.docx" hidden />
+        <p class="file-hint">PDF &middot; DOC &middot; DOCX</p>
+        <div class="file-name" id="bid-name"></div>
+      </div>
+
+    </div>
+
+    <button class="btn-primary full-width" id="evaluate-btn" disabled>
+      &#128269; Run Evaluation
+    </button>
+  </section>
+
+  <!-- ── Progress Section ──────────────────────────────────────────────── -->
+  <section class="card hidden" id="progress-section">
+    <h2>&#9881; Evaluation in Progress&hellip;</h2>
+    <div class="pipeline">
+
+      <div class="pipe-step" id="step-1">
+        <div class="pipe-icon">&#128229;</div>
+        <div class="pipe-body">
+          <div class="pipe-title">Document Ingestion</div>
+          <div class="pipe-sub">Extracting text from uploaded documents</div>
+        </div>
+        <div class="pipe-badge pending">Pending</div>
+      </div>
+
+      <div class="pipe-step" id="step-2">
+        <div class="pipe-icon">&#128269;</div>
+        <div class="pipe-body">
+          <div class="pipe-title">Rule &amp; Criteria Extraction</div>
+          <div class="pipe-sub">Identifying scoring rules from the RFP</div>
+        </div>
+        <div class="pipe-badge pending">Pending</div>
+      </div>
+
+      <div class="pipe-step" id="step-3">
+        <div class="pipe-icon">&#128202;</div>
+        <div class="pipe-body">
+          <div class="pipe-title">Vendor Response Parsing</div>
+          <div class="pipe-sub">Mapping bid content to each criterion</div>
+        </div>
+        <div class="pipe-badge pending">Pending</div>
+      </div>
+
+      <div class="pipe-step" id="step-4">
+        <div class="pipe-icon">&#129518;</div>
+        <div class="pipe-body">
+          <div class="pipe-title">Score Calculation</div>
+          <div class="pipe-sub">Applying weighted scoring rules &amp; checking disqualifiers</div>
+        </div>
+        <div class="pipe-badge pending">Pending</div>
+      </div>
+
+      <div class="pipe-step" id="step-5">
+        <div class="pipe-icon">&#9888;</div>
+        <div class="pipe-body">
+          <div class="pipe-title">Gap Analysis &amp; Risk Flagging</div>
+          <div class="pipe-sub">Identifying gaps, weak areas, and risks</div>
+        </div>
+        <div class="pipe-badge pending">Pending</div>
+      </div>
+
+      <div class="pipe-step" id="step-6">
+        <div class="pipe-icon">&#128203;</div>
+        <div class="pipe-body">
+          <div class="pipe-title">Report Generation</div>
+          <div class="pipe-sub">Compiling final evaluation report</div>
+        </div>
+        <div class="pipe-badge pending">Pending</div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ── Results Section ───────────────────────────────────────────────── -->
+  <section id="results-section" class="hidden">
+
+    <!-- Verdict Banner -->
+    <div id="verdict-banner" class="verdict-banner">
+      <div class="verdict-inner">
+        <div class="verdict-score-block">
+          <span id="v-score" class="v-score">--</span>
+          <span class="v-sep">/</span>
+          <span id="v-max" class="v-max">100</span>
+        </div>
+        <div class="verdict-text-block">
+          <div id="v-label" class="v-label">--</div>
+          <div id="v-threshold" class="v-threshold">Threshold: --</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Executive Summary -->
+    <div class="card">
+      <h2>&#128221; Executive Summary</h2>
+      <p id="exec-summary" class="summary-text">--</p>
+    </div>
+
+    <!-- Disqualification Alert -->
+    <div class="card alert-disq hidden" id="disq-alert">
+      <h2>&#128683; Automatic Disqualification</h2>
+      <p id="disq-reason">--</p>
+    </div>
+
+    <!-- Category Scores -->
+    <div class="card">
+      <h2>&#128202; Category Score Breakdown</h2>
+      <div class="table-wrap">
+        <table class="data-table" id="cat-table">
+          <thead>
+            <tr>
+              <th>Category</th>
+              <th>Max Marks</th>
+              <th>Marks Awarded</th>
+              <th>% Achieved</th>
+              <th>Min Required</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="cat-tbody"></tbody>
+          <tfoot id="cat-tfoot"></tfoot>
+        </table>
+      </div>
+    </div>
+
+    <!-- Mandatory Eligibility Checks -->
+    <div class="card" id="disq-checks-card">
+      <h2>&#9989; Mandatory Eligibility Checks</h2>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Condition</th>
+              <th>Status</th>
+              <th>Notes</th>
+            </tr>
+          </thead>
+          <tbody id="disq-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Criteria Detail Accordion -->
+    <div class="card">
+      <h2>&#128269; Criterion-Level Details</h2>
+      <div id="criteria-accordion"></div>
+    </div>
+
+    <!-- Gap Analysis -->
+    <div class="card">
+      <h2>&#9888; Gap Analysis &amp; Risk Flags</h2>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Risk Area</th>
+              <th>Severity</th>
+              <th>Description</th>
+            </tr>
+          </thead>
+          <tbody id="risk-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Reviewer Override -->
+    <div class="card">
+      <h2>&#9999; Reviewer Override</h2>
+      <p class="override-intro">Select a criterion to adjust its score. Overrides will be noted in the justification and totals recalculated.</p>
+
+      <div class="override-grid">
+        <select id="ov-category"><option value="">— Select Category —</option></select>
+        <select id="ov-criterion"><option value="">— Select Criterion —</option></select>
+        <input type="number" id="ov-marks" placeholder="New marks" min="0" step="0.5" />
+        <input type="text" id="ov-reason" placeholder="Reason (optional)" />
+        <button class="btn-outline" id="ov-add-btn">Add Override</button>
+      </div>
+
+      <div id="ov-tags"></div>
+
+      <button class="btn-primary" id="ov-apply-btn" style="margin-top:1.25rem">
+        &#128260; Recalculate with Overrides
+      </button>
+    </div>
+
+    <!-- New Evaluation -->
+    <div class="center-row">
+      <button class="btn-outline" id="new-eval-btn">&#128260; Start New Evaluation</button>
+    </div>
+
+  </section>
+
+</main>
+
+<footer>
+  <p>Powered by Claude AI &mdash; 7-Stage RFP Evaluation Pipeline</p>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>
