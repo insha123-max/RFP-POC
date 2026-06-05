@@ -481,6 +481,36 @@ el("ov-apply-btn").addEventListener("click", async () => {
   }
 });
 
+/* Download Word report */
+el("download-word-btn").addEventListener("click", async () => {
+  if (!currentReport) return;
+  const btn = el("download-word-btn");
+  btn.disabled = true;
+  btn.textContent = "Generating…";
+  try {
+    const res = await fetch("/api/export/word", {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify(currentReport),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const blob     = await res.blob();
+    const url      = URL.createObjectURL(blob);
+    const a        = document.createElement("a");
+    a.href         = url;
+    a.download     = `RFP_Evaluation_${currentReport.passed ? "PASSED" : "FAILED"}.docx`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  } catch (e) {
+    alert("Export failed: " + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Download Word Report`;
+  }
+});
+
 /* New evaluation */
 el("new-eval-btn").addEventListener("click", () => {
   currentReport    = null;
