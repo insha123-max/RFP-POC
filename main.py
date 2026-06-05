@@ -75,6 +75,15 @@ async def apply_override(request: OverrideRequest):
                     continue
                 old = crit.marks_awarded
                 crit.marks_awarded = min(override.new_marks, crit.max_marks)
+
+                # Update compliance_status to reflect the new marks
+                if crit.marks_awarded >= crit.max_marks:
+                    crit.compliance_status = "Met"
+                elif crit.marks_awarded > 0:
+                    crit.compliance_status = "Partial"
+                else:
+                    crit.compliance_status = "Not Met"
+
                 note = f" [REVIEWER OVERRIDE: {old} → {crit.marks_awarded}"
                 if override.reason:
                     note += f". Reason: {override.reason}"
@@ -95,6 +104,8 @@ async def apply_override(request: OverrideRequest):
                 cat_result.passed = (
                     cat_result.percent_achieved >= cat_result.minimum_required
                 )
+            else:
+                cat_result.passed = cat_result.percent_achieved > 0
 
     # Recalculate overall totals
     report.total_score = round(
