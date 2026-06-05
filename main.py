@@ -5,9 +5,11 @@ import os
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 
 from document import extract_text
+from export import generate_word_report
 from models import EvaluationReport, OverrideRequest
 from pipeline import run_full_evaluation
 
@@ -112,6 +114,21 @@ async def apply_override(request: OverrideRequest):
     )
 
     return report
+
+
+@app.post("/api/export/word")
+async def export_word(report: EvaluationReport):
+    """Generate and return a Word (.docx) evaluation report."""
+    try:
+        doc_bytes = generate_word_report(report)
+        filename  = f"RFP_Evaluation_{'PASSED' if report.passed else 'FAILED'}.docx"
+        return Response(
+            content=doc_bytes,
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Export failed: {exc}")
 
 
 @app.get("/api/health")
