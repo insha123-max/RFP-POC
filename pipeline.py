@@ -24,10 +24,17 @@ from models import (
 
 load_dotenv()
 
-MODEL_NAME     = "llama-3.3-70b-versatile"   # 12,000 TPM, 100K tokens/day free tier
-MAX_RFP_CHARS  =  8_000   # smart-filtered RFP text sent for rule extraction
-MAX_BID_CHARS  =  4_000   # smart-filtered bid text sent per category evaluation call
-MAX_DISQ_CHARS =  4_000   # smart-filtered bid text sent for disqualifier check
+# Model fallback list — tried in order when daily/per-request limits are hit
+# llama-3.1-8b-instant : 500K tokens/day,  6K TPM  (primary — highest daily quota)
+# llama-3.3-70b-versatile: 100K tokens/day, 12K TPM  (fallback — better quality)
+_MODELS = ["llama-3.1-8b-instant", "llama-3.3-70b-versatile"]
+MODEL_NAME     = _MODELS[0]
+
+# Chunk sizes calibrated for llama-3.1-8b-instant's 6K TPM limit.
+# At ~1.5 tokens/char for dense docs: 3000 chars ≈ 4500 tokens → safe under 6K.
+MAX_RFP_CHARS  =  3_000
+MAX_BID_CHARS  =  2_500
+MAX_DISQ_CHARS =  2_500
 
 SYSTEM = (
     "You are an expert RFP (Request for Proposal) / Tender Evaluation Assistant. "
@@ -48,28 +55,31 @@ def get_client() -> AsyncGroq:
     return _client
 
 
-async def _call(prompt: str, max_retries: int = 4) -> str:
-    """Call Groq with exponential backoff on rate-limit (429) errors."""
-    for attempt in range(max_retries):
+async def _call(prompt: str) -> str:
+    """Try each model in _MODELS; fall back to next on rate-limit errors."""
+    last_exc: Exception = RuntimeError("No models available")
+    for model in _MODELS:
         try:
             resp = await get_client().chat.completions.create(
-                model=MODEL_NAME,
+                model=model,
                 messages=[
                     {"role": "system", "content": SYSTEM},
                     {"role": "user",   "content": prompt},
                 ],
                 temperature=0.1,
-                max_tokens=4096,
+                max_tokens=2048,
             )
             return resp.choices[0].message.content
         except Exception as exc:
-            if attempt < max_retries - 1 and (
-                "429" in str(exc) or "rate" in str(exc).lower()
-            ):
-                wait = 30 * (2 ** attempt)   # 30s, 60s, 120s
-                await asyncio.sleep(wait)
-            else:
-                raise
+            err = str(exc)
+            # Daily limit (TPD) or per-request limit (TPM) → try next model
+            if "429" in err or "rate" in err.lower() or "quota" in err.lower():
+                print(f"[_call] {model} rate-limited, trying next model. Error: {err[:120]}")
+                last_exc = exc
+                await asyncio.sleep(3)
+                continue
+            raise   # non-rate-limit error: raise immediately
+    raise last_exc
 
 
 # ---------------------------------------------------------------------------
@@ -230,44 +240,115 @@ def _extract_bid_sections(bid_text: str, criteria_list: list, max_chars: int) ->
 # Stage 2 — Rule & Criteria Extraction
 # ---------------------------------------------------------------------------
 
+def _rfp_extract_prompt(chunk: str) -> str:
+    return (
+        f"Extract scoring criteria, marks, and evaluation parameters from this tender document section.\n\n"
+        f"{chunk}\n\n"
+        f"Return ONLY JSON:\n"
+        f'{{"rules_found":true,"scoring_categories":[{{"category":"Technical Bid","max_marks":70,"weight_percent":70,'
+        f'"subcriteria":[{{"criterion":"Company experience","max_marks":20,"mandatory":false}}]}}],'
+        f'"threshold":{{"overall_pass_mark":70,"category_minimums":[]}},"mandatory_disqualifiers":[]}}\n\n'
+        f"Set rules_found=false only if this section has absolutely no evaluation criteria."
+    )
+
+
+def _normalize_disqualifiers(raw: list) -> list:
+    result = []
+    for d in raw:
+        if isinstance(d, dict):
+            d = d.get("criterion") or d.get("condition") or d.get("description") or str(d)
+        if d:
+            result.append(str(d))
+    return result
+
+
 async def stage2_extract_rules(rfp_text: str) -> EvaluationRules:
-    relevant_text = _extract_scoring_sections(rfp_text, MAX_RFP_CHARS)
+    # Build 3 chunks: keyword-filtered + raw sequential chunks
+    keyword_text = _extract_scoring_sections(rfp_text, MAX_RFP_CHARS)
+    chunks = [keyword_text]
+    for start in range(0, min(len(rfp_text), MAX_RFP_CHARS * 3), MAX_RFP_CHARS):
+        chunks.append(rfp_text[start: start + MAX_RFP_CHARS])
+    chunks = [c for c in chunks if c.strip()][:4]  # at most 4 calls
 
-    prompt = f"""Extract ALL scoring criteria from this RFP/Tender document. Scoring may be distributed across sections — not necessarily in one table. Look for marks, percentages, weightages, points, or evaluation parameters anywhere in the text. Infer sub-criteria from descriptions even without explicit marks.
+    # Merge categories from all chunks
+    all_cats: dict[str, dict] = {}
+    all_disq: list[str] = []
+    pass_mark = 0.0
+    cat_mins: dict[str, dict] = {}
 
-RFP (scoring-relevant sections):
-{relevant_text}
+    for chunk in chunks:
+        try:
+            data = _parse_object(await _call(_rfp_extract_prompt(chunk)))
+            for cat in data.get("scoring_categories", []):
+                key = cat.get("category", "").strip().lower()
+                if not key:
+                    continue
+                if key not in all_cats:
+                    all_cats[key] = {**cat}
+                else:
+                    exist_subs = {s["criterion"].lower() for s in all_cats[key].get("subcriteria", [])}
+                    for sub in cat.get("subcriteria", []):
+                        if sub.get("criterion", "").lower() not in exist_subs:
+                            all_cats[key].setdefault("subcriteria", []).append(sub)
+            for d in _normalize_disqualifiers(data.get("mandatory_disqualifiers", [])):
+                if d not in all_disq:
+                    all_disq.append(d)
+            thresh = data.get("threshold", {})
+            pm = float(thresh.get("overall_pass_mark") or 0)
+            if pm > pass_mark:
+                pass_mark = pm
+            for cm in thresh.get("category_minimums", []):
+                cat_mins[cm.get("category", "").lower()] = cm
+        except Exception as e:
+            print(f"[Stage2 chunk] error: {e}")
+            continue
 
-Return ONLY JSON:
-{{"rules_found":true,"scoring_categories":[{{"category":"Name","max_marks":70,"weight_percent":70,"subcriteria":[{{"criterion":"Name","max_marks":10,"mandatory":false}}]}}],"threshold":{{"overall_pass_mark":70,"category_minimums":[{{"category":"Technical Score","minimum_percent":70}}]}},"mandatory_disqualifiers":["condition"]}}
+    # Normalise weights to sum to 100
+    raw_cats = []
+    for cat in all_cats.values():
+        mm = float(cat.get("max_marks") or 0)
+        wp = float(cat.get("weight_percent") or 0)
+        if mm == 0 and cat.get("subcriteria"):
+            mm = sum(float(s.get("max_marks") or 0) for s in cat["subcriteria"])
+        if wp == 0:
+            wp = mm
+        if mm > 0:
+            raw_cats.append((cat, mm, wp))
 
-Set rules_found=false only if there is absolutely no scoring information."""
-
-    data = _parse_object(await _call(prompt))
+    total_w = sum(w for _, _, w in raw_cats)
+    if total_w > 0:
+        raw_cats = [(c, m, round(w / total_w * 100, 2)) for c, m, w in raw_cats]
 
     categories = [
         ScoringCategory(
-            category=cat["category"],
-            max_marks=float(cat["max_marks"]),
-            weight_percent=float(cat["weight_percent"]),
-            subcriteria=[SubCriterion(**s) for s in cat.get("subcriteria", [])],
+            category=c["category"], max_marks=m, weight_percent=w,
+            subcriteria=[SubCriterion(**s) for s in c.get("subcriteria", [])],
         )
-        for cat in data.get("scoring_categories", [])
+        for c, m, w in raw_cats
     ]
 
-    raw_thresh = data.get("threshold", {})
+    # Absolute fallback — use generic structure so evaluation never crashes
+    if not categories:
+        print("[Stage2] No criteria found — using generic fallback structure")
+        categories = [
+            ScoringCategory(category="Technical Bid", max_marks=70, weight_percent=70, subcriteria=[]),
+            ScoringCategory(category="Commercial Bid", max_marks=30, weight_percent=30, subcriteria=[]),
+        ]
+        pass_mark = 70.0
+
     threshold = Threshold(
-        overall_pass_mark=float(raw_thresh.get("overall_pass_mark", 0)),
+        overall_pass_mark=pass_mark,
         category_minimums=[
-            CategoryMinimum(**m) for m in raw_thresh.get("category_minimums", [])
+            CategoryMinimum(category=cm.get("category", ""), minimum_percent=float(cm.get("minimum_percent") or 0))
+            for cm in cat_mins.values()
         ],
     )
 
     return EvaluationRules(
-        rules_found=data.get("rules_found", False),
+        rules_found=bool(all_cats),
         scoring_categories=categories,
         threshold=threshold,
-        mandatory_disqualifiers=data.get("mandatory_disqualifiers", []),
+        mandatory_disqualifiers=all_disq,
     )
 
 
@@ -300,34 +381,20 @@ async def stage3_parse_vendor_response(
         # Extract bid sections most relevant to THIS category's criteria
         relevant_bid = _extract_bid_sections(bid_text, criteria_list, MAX_BID_CHARS)
 
-        prompt = f"""Evaluate the vendor bid against these criteria for the "{cat.category}" category.
+        is_generic = not cat.subcriteria  # True when no specific subcriteria found
+        prompt = f"""Evaluate the vendor bid for the "{cat.category}" category.
 
-VENDOR BID (sections most relevant to {cat.category}):
+VENDOR BID:
 {relevant_bid}
 
-CRITERIA TO EVALUATE:
+CRITERIA:
 {json.dumps(criteria_list, indent=2)}
 
-Rules:
-- "Met"     → vendor explicitly satisfies the criterion with clear evidence — quote it.
-- "Partial" → vendor mentions or demonstrates a related capability but doesn't fully meet it.
-- "Not Met" → no relevant evidence found anywhere in the bid.
-- Use "Partial" generously when the vendor shows related work or capability.
+{"This is a broad category assessment. Award 'Met' if the bid clearly addresses this category, 'Partial' if the bid partially addresses it, 'Not Met' only if completely absent." if is_generic else
+"Be specific: 'Met' requires explicit evidence matching the criterion. 'Partial' for partial evidence. 'Not Met' only when nothing relevant is found."}
 
-Return ONLY a JSON array — one object per criterion:
-[
-  {{
-    "criterion": "<exact name from list>",
-    "category": "<category>",
-    "max_marks": <number>,
-    "vendor_claim": "<direct quote or description from bid, or 'Not found in document'>",
-    "source_reference": "<Section/Page or 'Not found'>",
-    "compliance_status": "Met|Partial|Not Met",
-    "confidence": "High|Medium|Low",
-    "justification": "<one sentence>",
-    "is_mandatory": <true|false>
-  }}
-]"""
+Return ONLY a JSON array:
+[{{"criterion":"<name>","category":"<cat>","max_marks":<n>,"vendor_claim":"<quote or Not found>","source_reference":"<section or Not found>","compliance_status":"Met|Partial|Not Met","confidence":"High|Medium|Low","justification":"<one sentence>","is_mandatory":<true|false>}}]"""
 
         try:
             items = _parse_array(await _call(prompt))
@@ -505,8 +572,7 @@ Return ONLY the summary text — no JSON, no headers."""
 async def run_full_evaluation(rfp_text: str, bid_text: str) -> EvaluationReport:
     rules = await stage2_extract_rules(rfp_text)
 
-    if not rules.scoring_categories:
-        raise ValueError("NO_RULES_FOUND")
+    # stage2 now has a built-in fallback — scoring_categories will always be non-empty
 
     criteria_evals      = await stage3_parse_vendor_response(bid_text, rules)
     category_results    = stage4_calculate_scores(criteria_evals, rules)

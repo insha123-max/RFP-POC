@@ -252,9 +252,14 @@ function renderCategories(r) {
   renderScoreCards(r);
 
   r.category_results.forEach(cat => {
-    const minTxt = cat.minimum_required != null ? cat.minimum_required + "%" : badge("nomin", "No Min");
+    const hasMin = cat.minimum_required != null;
+    const minTxt = hasMin ? cat.minimum_required + "%" : "<span style='color:var(--muted)'>—</span>";
     const pct = cat.percent_achieved || 0;
     const barClass = pct >= 70 ? "success" : pct >= 40 ? "warning" : "danger";
+    // Only show Pass/Fail badge when a category minimum is explicitly set
+    const statusTxt = hasMin
+      ? badge(cat.passed ? "pass" : "fail", cat.passed ? "✓ Pass" : "✗ Fail")
+      : `<span style="color:var(--muted);font-size:.8rem">No minimum set</span>`;
     tbody.insertAdjacentHTML("beforeend", `
       <tr>
         <td><strong>${esc(cat.category)}</strong></td>
@@ -267,7 +272,7 @@ function renderCategories(r) {
         </td>
         <td>${cat.max_marks}</td>
         <td>${minTxt}</td>
-        <td>${badge(cat.passed ? "pass" : "fail", cat.passed ? "✓ Pass" : "✗ Fail")}</td>
+        <td>${statusTxt}</td>
       </tr>`);
   });
 
