@@ -156,28 +156,92 @@ function renderReport(report) {
 /* Verdict banner */
 function renderVerdict(r) {
   const banner = document.getElementById("verdict-banner");
+  if (!banner) return;
   banner.className = "verdict-banner " + (r.passed ? "passed" : "failed");
-  el("v-score").textContent     = r.total_score;
-  el("v-max").textContent       = r.max_score;
-  el("v-label").textContent     = r.passed ? "✓ PASSED" : "✗ FAILED";
-  el("v-threshold").textContent = "Threshold: " + r.threshold + " / " + r.max_score;
+
+  const pct = r.max_score ? Math.round((r.total_score / r.max_score) * 100) : 0;
+
+  animateCount("v-score", 0, r.total_score, 1200);
+  setText("v-max-ring",  " / " + r.max_score);
+  setText("v-label",     r.passed ? "✓ PASSED" : "✗ FAILED");
+  setText("v-threshold", "Threshold: " + r.threshold + " / " + r.max_score);
+
+  // Score ring animation
+  const circumference = 327;
+  const fill = document.getElementById("ring-fill");
+  if (fill) {
+    setTimeout(() => {
+      fill.style.strokeDashoffset = circumference - (pct / 100) * circumference;
+    }, 200);
+  }
+
+  // Verdict meta tags
+  const meta = el("verdict-meta");
+  if (meta) {
+    const tags = [
+      r.disqualified ? "Disqualified" : null,
+      r.max_score ? pct + "% achieved" : null,
+      r.category_results.length + " categories evaluated",
+    ].filter(Boolean);
+    meta.innerHTML = tags.map(t => `<span class="verdict-tag">${esc(t)}</span>`).join("");
+  }
+}
+
+function animateCount(id, from, to, duration) {
+  const el2 = el(id);
+  if (!el2) return;
+  const start = performance.now();
+  const update = (now) => {
+    const progress = Math.min((now - start) / duration, 1);
+    const ease = 1 - Math.pow(1 - progress, 3);
+    el2.textContent = (from + (to - from) * ease).toFixed(1);
+    if (progress < 1) requestAnimationFrame(update);
+    else el2.textContent = to;
+  };
+  requestAnimationFrame(update);
 }
 
 /* Executive summary */
 function renderSummary(r) {
-  el("exec-summary").textContent = r.executive_summary;
+  setText("exec-summary", r.executive_summary || "");
 }
 
 /* Disqualification alert */
 function renderDisqualification(r) {
   const card = document.getElementById("disq-alert");
+  if (!card) return;
   if (r.disqualified && r.disqualification_reason) {
-    el("disq-reason").textContent =
-      "This bid was automatically disqualified because: " + r.disqualification_reason;
+    setText("disq-reason", "This bid was automatically disqualified because: " + r.disqualification_reason);
     card.classList.remove("hidden");
   } else {
     card.classList.add("hidden");
   }
+}
+
+/* Score cards */
+function renderScoreCards(r) {
+  const container = el("score-cards");
+  if (!container) return;
+  const overallPct = r.max_score ? ((r.total_score / r.max_score) * 100).toFixed(1) : "0.0";
+  const passedCats = r.category_results.filter(c => c.passed).length;
+  const cards = [
+    { label: "Total Score", value: r.total_score + " / " + r.max_score, sub: overallPct + "% achieved", pct: parseFloat(overallPct) },
+    { label: "Threshold", value: r.threshold + " / " + r.max_score, sub: "Minimum required", pct: r.max_score ? (r.threshold / r.max_score * 100) : 0 },
+    { label: "Categories Passed", value: passedCats + " / " + r.category_results.length, sub: "Scoring categories", pct: r.category_results.length ? passedCats / r.category_results.length * 100 : 0 },
+    { label: "Eligibility Checks", value: r.disqualifier_checks.filter(d => d.met).length + " / " + r.disqualifier_checks.length, sub: "Requirements met", pct: r.disqualifier_checks.length ? r.disqualifier_checks.filter(d => d.met).length / r.disqualifier_checks.length * 100 : 100 },
+  ];
+  container.innerHTML = cards.map(c => `
+    <div class="score-card">
+      <div class="score-card-label">${esc(c.label)}</div>
+      <div class="score-card-value">${esc(c.value)}</div>
+      <div class="score-card-sub">${esc(c.sub)}</div>
+      <div class="score-card-bar"><div class="score-card-bar-fill" style="width:0%" data-pct="${c.pct}"></div></div>
+    </div>`).join("");
+  setTimeout(() => {
+    container.querySelectorAll(".score-card-bar-fill").forEach(b => {
+      b.style.width = Math.min(parseFloat(b.dataset.pct), 100) + "%";
+    });
+  }, 300);
 }
 
 /* Category breakdown */
@@ -185,27 +249,41 @@ function renderCategories(r) {
   const tbody = el("cat-tbody");
   const tfoot = el("cat-tfoot");
   tbody.innerHTML = "";
+  renderScoreCards(r);
 
   r.category_results.forEach(cat => {
-    const minTxt = cat.minimum_required != null ? cat.minimum_required + "%" : "&mdash;";
+    const minTxt = cat.minimum_required != null ? cat.minimum_required + "%" : badge("nomin", "No Min");
+    const pct = cat.percent_achieved || 0;
+    const barClass = pct >= 70 ? "success" : pct >= 40 ? "warning" : "danger";
     tbody.insertAdjacentHTML("beforeend", `
       <tr>
         <td><strong>${esc(cat.category)}</strong></td>
+        <td><strong>${cat.marks_awarded.toFixed(1)}</strong> <span style="color:var(--muted);font-size:.8rem">/ ${cat.max_marks}</span></td>
+        <td>
+          <div class="score-bar-wrap">
+            <div class="score-bar"><div class="score-bar-fill ${barClass}" style="width:${pct}%"></div></div>
+            <span class="score-bar-pct">${pct}%</span>
+          </div>
+        </td>
         <td>${cat.max_marks}</td>
-        <td>${cat.marks_awarded.toFixed(1)}</td>
-        <td>${cat.percent_achieved}%</td>
         <td>${minTxt}</td>
         <td>${badge(cat.passed ? "pass" : "fail", cat.passed ? "✓ Pass" : "✗ Fail")}</td>
       </tr>`);
   });
 
   const overallPct = r.max_score ? ((r.total_score / r.max_score) * 100).toFixed(1) : "0.0";
+  const totalBarClass = parseFloat(overallPct) >= 70 ? "success" : parseFloat(overallPct) >= 40 ? "warning" : "danger";
   tfoot.innerHTML = `
     <tr>
-      <td>Total (Weighted)</td>
+      <td><strong>Total (Weighted)</strong></td>
+      <td><strong>${r.total_score}</strong> <span style="color:var(--muted);font-size:.8rem">/ ${r.max_score}</span></td>
+      <td>
+        <div class="score-bar-wrap">
+          <div class="score-bar"><div class="score-bar-fill ${totalBarClass}" style="width:${overallPct}%"></div></div>
+          <span class="score-bar-pct">${overallPct}%</span>
+        </div>
+      </td>
       <td>${r.max_score}</td>
-      <td>${r.total_score}</td>
-      <td>${overallPct}%</td>
       <td>&ge; ${r.threshold}</td>
       <td>${badge(r.passed ? "pass" : "fail", r.passed ? "✓ PASSED" : "✗ FAILED")}</td>
     </tr>`;
@@ -288,20 +366,27 @@ function toggleAcc(header) {
 
 /* Gap / risk analysis */
 function renderRisks(r) {
-  const tbody = el("risk-tbody");
-  tbody.innerHTML = "";
+  const container = el("risk-list");
+  if (!container) return;
+  container.innerHTML = "";
 
   if (!r.risk_items || r.risk_items.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="3" style="text-align:center;color:var(--muted);padding:1.5rem">No significant risks identified.</td></tr>`;
+    container.innerHTML = `<div style="text-align:center;color:var(--muted);padding:2rem;font-size:.9rem">No significant risks identified.</div>`;
     return;
   }
   r.risk_items.forEach(risk => {
-    tbody.insertAdjacentHTML("beforeend", `
-      <tr>
-        <td><strong>${esc(risk.risk_area)}</strong></td>
-        <td>${badge(risk.severity.toLowerCase(), risk.severity)}</td>
-        <td style="font-size:.875rem">${esc(risk.description)}</td>
-      </tr>`);
+    const sev = (risk.severity || "low").toLowerCase();
+    container.insertAdjacentHTML("beforeend", `
+      <div class="risk-item ${sev}">
+        <div class="risk-dot"></div>
+        <div class="risk-content">
+          <div class="risk-title">
+            ${esc(risk.risk_area)}
+            ${badge(sev, risk.severity)}
+          </div>
+          <div class="risk-desc">${esc(risk.description)}</div>
+        </div>
+      </div>`);
   });
 }
 
@@ -412,8 +497,9 @@ el("new-eval-btn").addEventListener("click", () => {
 
 /* ── Helpers ────────────────────────────────────────────────────────────── */
 function el(id)             { return document.getElementById(id); }
-function show(id)           { el(id).classList.remove("hidden"); }
-function hide(id)           { el(id).classList.add("hidden"); }
+function show(id)           { const e = el(id); if (e) e.classList.remove("hidden"); }
+function hide(id)           { const e = el(id); if (e) e.classList.add("hidden"); }
+function setText(id, val)   { const e = el(id); if (e) e.textContent = val; }
 function pause(ms)          { return new Promise(r => setTimeout(r, ms)); }
 function esc(s)             { return String(s ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
 function badge(cls, label)  { return `<span class="badge badge-${cls}">${esc(label)}</span>`; }

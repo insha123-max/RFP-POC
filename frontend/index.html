@@ -4,157 +4,256 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>RFP Evaluator — AI-Powered Tender Scoring</title>
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
 
+<!-- ── Header ──────────────────────────────────────────────────────────────── -->
 <header>
   <div class="header-inner">
-    <div class="logo">&#9878; RFP Evaluator</div>
-    <p class="tagline">Automated Tender Evaluation System &mdash; Powered by Claude AI</p>
+    <div class="header-logo">
+      <div class="logo-icon">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+          <polyline points="14 2 14 8 20 8"/>
+          <line x1="16" y1="13" x2="8" y2="13"/>
+          <line x1="16" y1="17" x2="8" y2="17"/>
+          <polyline points="10 9 9 9 8 9"/>
+        </svg>
+      </div>
+      <div>
+        <div class="logo-text">RFP Evaluator</div>
+        <div class="logo-sub">AI-Powered Tender Scoring</div>
+      </div>
+    </div>
+    <div class="header-badge">
+      <span class="ai-badge">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+        Powered by Groq AI
+      </span>
+    </div>
   </div>
 </header>
 
 <main>
 
-  <!-- ── Upload Section ────────────────────────────────────────────────── -->
-  <section class="card" id="upload-section">
-    <h2>&#128196; Upload Documents</h2>
+  <!-- ── Upload Section ──────────────────────────────────────────────────── -->
+  <section class="card upload-card" id="upload-section">
+    <div class="section-label">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      Upload Documents
+    </div>
+    <h2 class="section-title">Evaluate Your Tender Bid</h2>
+    <p class="section-desc">Upload the RFP and vendor bid documents to start the AI-powered evaluation pipeline.</p>
 
     <div class="upload-grid">
-
       <div class="upload-zone" id="rfp-zone" data-target="rfp-input">
-        <div class="upload-icon">&#128203;</div>
-        <h3>RFP / Tender Document</h3>
-        <p>Upload the RFP that contains the evaluation criteria and scoring rules</p>
-        <label class="upload-btn" for="rfp-input">Browse Files</label>
-        <input type="file" id="rfp-input" accept=".pdf,.doc,.docx" hidden />
-        <p class="file-hint">PDF &middot; DOC &middot; DOCX</p>
-        <div class="file-name" id="rfp-name"></div>
+        <div class="upload-zone-inner">
+          <div class="upload-icon-wrap rfp-icon">
+            <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+          </div>
+          <h3>RFP / Tender Document</h3>
+          <p>Contains the evaluation criteria and scoring rules</p>
+          <label class="upload-btn" for="rfp-input">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            Choose File
+          </label>
+          <input type="file" id="rfp-input" accept=".pdf,.doc,.docx" hidden />
+          <p class="file-hint">PDF &middot; DOC &middot; DOCX</p>
+          <div class="file-name" id="rfp-name"></div>
+        </div>
       </div>
 
-      <div class="vs-badge">VS</div>
+      <div class="vs-divider">
+        <div class="vs-line"></div>
+        <div class="vs-badge">VS</div>
+        <div class="vs-line"></div>
+      </div>
 
       <div class="upload-zone" id="bid-zone" data-target="bid-input">
-        <div class="upload-icon">&#128221;</div>
-        <h3>Vendor Bid Document</h3>
-        <p>Upload the vendor&rsquo;s response or bid that will be evaluated</p>
-        <label class="upload-btn" for="bid-input">Browse Files</label>
-        <input type="file" id="bid-input" accept=".pdf,.doc,.docx" hidden />
-        <p class="file-hint">PDF &middot; DOC &middot; DOCX</p>
-        <div class="file-name" id="bid-name"></div>
+        <div class="upload-zone-inner">
+          <div class="upload-icon-wrap bid-icon">
+            <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20 14.66V20a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h5.34"/><polygon points="18 2 22 6 12 16 8 16 8 12 18 2"/></svg>
+          </div>
+          <h3>Vendor Bid Document</h3>
+          <p>The vendor&rsquo;s response that will be scored</p>
+          <label class="upload-btn bid-btn" for="bid-input">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            Choose File
+          </label>
+          <input type="file" id="bid-input" accept=".pdf,.doc,.docx" hidden />
+          <p class="file-hint">PDF &middot; DOC &middot; DOCX</p>
+          <div class="file-name" id="bid-name"></div>
+        </div>
       </div>
-
     </div>
 
     <button class="btn-primary full-width" id="evaluate-btn" disabled>
-      &#128269; Run Evaluation
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      Run Evaluation
     </button>
   </section>
 
-  <!-- ── Progress Section ──────────────────────────────────────────────── -->
+  <!-- ── Progress Section ────────────────────────────────────────────────── -->
   <section class="card hidden" id="progress-section">
-    <h2>&#9881; Evaluation in Progress&hellip;</h2>
-    <div class="pipeline">
+    <div class="section-label">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+      Processing
+    </div>
+    <h2 class="section-title">Evaluation in Progress</h2>
+    <p class="section-desc">Our AI pipeline is analyzing your documents. This may take 30–90 seconds.</p>
 
+    <div class="pipeline">
       <div class="pipe-step" id="step-1">
-        <div class="pipe-icon">&#128229;</div>
+        <div class="pipe-num">1</div>
+        <div class="pipe-icon-wrap">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        </div>
         <div class="pipe-body">
           <div class="pipe-title">Document Ingestion</div>
           <div class="pipe-sub">Extracting text from uploaded documents</div>
         </div>
         <div class="pipe-badge pending">Pending</div>
       </div>
+      <div class="pipe-connector"></div>
 
       <div class="pipe-step" id="step-2">
-        <div class="pipe-icon">&#128269;</div>
+        <div class="pipe-num">2</div>
+        <div class="pipe-icon-wrap">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        </div>
         <div class="pipe-body">
           <div class="pipe-title">Rule &amp; Criteria Extraction</div>
           <div class="pipe-sub">Identifying scoring rules from the RFP</div>
         </div>
         <div class="pipe-badge pending">Pending</div>
       </div>
+      <div class="pipe-connector"></div>
 
       <div class="pipe-step" id="step-3">
-        <div class="pipe-icon">&#128202;</div>
+        <div class="pipe-num">3</div>
+        <div class="pipe-icon-wrap">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+        </div>
         <div class="pipe-body">
           <div class="pipe-title">Vendor Response Parsing</div>
           <div class="pipe-sub">Mapping bid content to each criterion</div>
         </div>
         <div class="pipe-badge pending">Pending</div>
       </div>
+      <div class="pipe-connector"></div>
 
       <div class="pipe-step" id="step-4">
-        <div class="pipe-icon">&#129518;</div>
+        <div class="pipe-num">4</div>
+        <div class="pipe-icon-wrap">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+        </div>
         <div class="pipe-body">
           <div class="pipe-title">Score Calculation</div>
           <div class="pipe-sub">Applying weighted scoring rules &amp; checking disqualifiers</div>
         </div>
         <div class="pipe-badge pending">Pending</div>
       </div>
+      <div class="pipe-connector"></div>
 
       <div class="pipe-step" id="step-5">
-        <div class="pipe-icon">&#9888;</div>
+        <div class="pipe-num">5</div>
+        <div class="pipe-icon-wrap">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        </div>
         <div class="pipe-body">
           <div class="pipe-title">Gap Analysis &amp; Risk Flagging</div>
           <div class="pipe-sub">Identifying gaps, weak areas, and risks</div>
         </div>
         <div class="pipe-badge pending">Pending</div>
       </div>
+      <div class="pipe-connector"></div>
 
       <div class="pipe-step" id="step-6">
-        <div class="pipe-icon">&#128203;</div>
+        <div class="pipe-num">6</div>
+        <div class="pipe-icon-wrap">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/></svg>
+        </div>
         <div class="pipe-body">
           <div class="pipe-title">Report Generation</div>
           <div class="pipe-sub">Compiling final evaluation report</div>
         </div>
         <div class="pipe-badge pending">Pending</div>
       </div>
-
     </div>
   </section>
 
-  <!-- ── Results Section ───────────────────────────────────────────────── -->
+  <!-- ── Results Section ─────────────────────────────────────────────────── -->
   <section id="results-section" class="hidden">
 
     <!-- Verdict Banner -->
     <div id="verdict-banner" class="verdict-banner">
       <div class="verdict-inner">
-        <div class="verdict-score-block">
-          <span id="v-score" class="v-score">--</span>
-          <span class="v-sep">/</span>
-          <span id="v-max" class="v-max">100</span>
+        <div class="verdict-score-wrap">
+          <div class="verdict-ring-wrap">
+            <svg class="score-ring" viewBox="0 0 120 120">
+              <circle class="ring-bg" cx="60" cy="60" r="52"/>
+              <circle class="ring-fill" id="ring-fill" cx="60" cy="60" r="52"/>
+            </svg>
+            <div class="ring-text">
+              <div class="ring-score" id="v-score">--</div>
+              <div class="ring-max" id="v-max-ring">/100</div>
+            </div>
+          </div>
         </div>
-        <div class="verdict-text-block">
+        <div class="verdict-info">
           <div id="v-label" class="v-label">--</div>
           <div id="v-threshold" class="v-threshold">Threshold: --</div>
+          <div class="verdict-meta" id="verdict-meta"></div>
         </div>
       </div>
     </div>
 
     <!-- Executive Summary -->
     <div class="card">
-      <h2>&#128221; Executive Summary</h2>
+      <div class="card-header">
+        <div class="card-header-icon summary-icon">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 14.66V20a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h5.34"/><polygon points="18 2 22 6 12 16 8 16 8 12 18 2"/></svg>
+        </div>
+        <h2>Executive Summary</h2>
+      </div>
       <p id="exec-summary" class="summary-text">--</p>
     </div>
 
     <!-- Disqualification Alert -->
-    <div class="card alert-disq hidden" id="disq-alert">
-      <h2>&#128683; Automatic Disqualification</h2>
-      <p id="disq-reason">--</p>
+    <div class="alert-disq hidden" id="disq-alert">
+      <div class="alert-icon">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+      </div>
+      <div>
+        <div class="alert-title">Automatic Disqualification</div>
+        <p id="disq-reason">--</p>
+      </div>
     </div>
+
+    <!-- Score Cards -->
+    <div class="score-cards" id="score-cards"></div>
 
     <!-- Category Scores -->
     <div class="card">
-      <h2>&#128202; Category Score Breakdown</h2>
+      <div class="card-header">
+        <div class="card-header-icon chart-icon">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+        </div>
+        <h2>Category Score Breakdown</h2>
+      </div>
       <div class="table-wrap">
         <table class="data-table" id="cat-table">
           <thead>
             <tr>
               <th>Category</th>
+              <th>Score</th>
+              <th>Progress</th>
               <th>Max Marks</th>
-              <th>Marks Awarded</th>
-              <th>% Achieved</th>
               <th>Min Required</th>
               <th>Status</th>
             </tr>
@@ -167,15 +266,16 @@
 
     <!-- Mandatory Eligibility Checks -->
     <div class="card" id="disq-checks-card">
-      <h2>&#9989; Mandatory Eligibility Checks</h2>
+      <div class="card-header">
+        <div class="card-header-icon check-icon">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+        </div>
+        <h2>Mandatory Eligibility Checks</h2>
+      </div>
       <div class="table-wrap">
         <table class="data-table">
           <thead>
-            <tr>
-              <th>Condition</th>
-              <th>Status</th>
-              <th>Notes</th>
-            </tr>
+            <tr><th>Condition</th><th>Status</th><th>Notes</th></tr>
           </thead>
           <tbody id="disq-tbody"></tbody>
         </table>
@@ -184,58 +284,65 @@
 
     <!-- Criteria Detail Accordion -->
     <div class="card">
-      <h2>&#128269; Criterion-Level Details</h2>
+      <div class="card-header">
+        <div class="card-header-icon detail-icon">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        </div>
+        <h2>Criterion-Level Details</h2>
+      </div>
       <div id="criteria-accordion"></div>
     </div>
 
     <!-- Gap Analysis -->
     <div class="card">
-      <h2>&#9888; Gap Analysis &amp; Risk Flags</h2>
-      <div class="table-wrap">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>Risk Area</th>
-              <th>Severity</th>
-              <th>Description</th>
-            </tr>
-          </thead>
-          <tbody id="risk-tbody"></tbody>
-        </table>
+      <div class="card-header">
+        <div class="card-header-icon risk-icon">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        </div>
+        <h2>Gap Analysis &amp; Risk Flags</h2>
       </div>
+      <div id="risk-list"></div>
     </div>
 
     <!-- Reviewer Override -->
     <div class="card">
-      <h2>&#9999; Reviewer Override</h2>
-      <p class="override-intro">Select a criterion to adjust its score. Overrides will be noted in the justification and totals recalculated.</p>
-
+      <div class="card-header">
+        <div class="card-header-icon override-icon">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+        </div>
+        <h2>Reviewer Override</h2>
+      </div>
+      <p class="override-intro">Manually adjust scores and recalculate totals. All overrides are logged in the justification.</p>
       <div class="override-grid">
         <select id="ov-category"><option value="">— Select Category —</option></select>
         <select id="ov-criterion"><option value="">— Select Criterion —</option></select>
         <input type="number" id="ov-marks" placeholder="New marks" min="0" step="0.5" />
         <input type="text" id="ov-reason" placeholder="Reason (optional)" />
-        <button class="btn-outline" id="ov-add-btn">Add Override</button>
+        <button class="btn-add" id="ov-add-btn">Add</button>
       </div>
-
       <div id="ov-tags"></div>
-
-      <button class="btn-primary" id="ov-apply-btn" style="margin-top:1.25rem">
-        &#128260; Recalculate with Overrides
+      <button class="btn-primary" id="ov-apply-btn" style="margin-top:1.5rem">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+        Recalculate with Overrides
       </button>
     </div>
 
-    <!-- New Evaluation -->
     <div class="center-row">
-      <button class="btn-outline" id="new-eval-btn">&#128260; Start New Evaluation</button>
+      <button class="btn-outline" id="new-eval-btn">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+        Start New Evaluation
+      </button>
     </div>
 
   </section>
-
 </main>
 
 <footer>
-  <p>Powered by Claude AI &mdash; 7-Stage RFP Evaluation Pipeline</p>
+  <div class="footer-inner">
+    <span>RFP Evaluator &mdash; 7-Stage AI Evaluation Pipeline</span>
+    <span class="footer-dot">·</span>
+    <span>Powered by Groq AI</span>
+  </div>
 </footer>
 
 <script src="app.js"></script>

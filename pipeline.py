@@ -24,10 +24,10 @@ from models import (
 
 load_dotenv()
 
-MODEL_NAME    = "llama-3.1-8b-instant"   # 500K tokens/day free (vs 100K for 70b)
-MAX_RFP_CHARS  = 14_000   # smart-filtered RFP text sent for rule extraction
-MAX_BID_CHARS  =  3_500   # smart-filtered bid text sent per category evaluation call
-MAX_DISQ_CHARS =  7_000   # smart-filtered bid text sent for disqualifier check
+MODEL_NAME     = "llama-3.3-70b-versatile"   # 12,000 TPM, 100K tokens/day free tier
+MAX_RFP_CHARS  =  8_000   # smart-filtered RFP text sent for rule extraction
+MAX_BID_CHARS  =  4_000   # smart-filtered bid text sent per category evaluation call
+MAX_DISQ_CHARS =  4_000   # smart-filtered bid text sent for disqualifier check
 
 SYSTEM = (
     "You are an expert RFP (Request for Proposal) / Tender Evaluation Assistant. "
