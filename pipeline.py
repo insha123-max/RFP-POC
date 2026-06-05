@@ -315,6 +315,34 @@ async def stage2_extract_rules(rfp_text: str) -> EvaluationRules:
         if mm > 0:
             raw_cats.append((cat, mm, wp))
 
+    # ── Separate compliance-submission categories from scoring categories ──────
+    # These are document-submission requirements (bank guarantee, PoA, etc.)
+    # They should be eligibility checks (pass/fail), not weighted score categories.
+    _COMPLIANCE_KEYWORDS = [
+        "bank guarantee", "performance guarantee", "performance bond",
+        "power of attorney", "authorization letter", "letter of authorization",
+        "emd", "earnest money", "demand draft", "dd ",
+        "undertaking", "affidavit", "declaration",
+        "stamp duty", "agreement", "annexure", "checklist",
+        "certificate of incorporation", "registration certificate",
+        "integrity pact", "non-disclosure", "nda",
+    ]
+
+    scoring_raw: list = []
+    for item in raw_cats:
+        cat_name = item[0].get("category", "").lower()
+        is_compliance = any(kw in cat_name for kw in _COMPLIANCE_KEYWORDS)
+        if is_compliance:
+            # Move to mandatory eligibility checks
+            disq_text = f"Submission of {item[0]['category']} required"
+            if disq_text not in all_disq:
+                all_disq.append(disq_text)
+            print(f"[Stage2] Moved '{item[0]['category']}' to eligibility checks")
+        else:
+            scoring_raw.append(item)
+    raw_cats = scoring_raw
+    # ─────────────────────────────────────────────────────────────────────────
+
     total_w = sum(w for _, _, w in raw_cats)
     if total_w > 0:
         raw_cats = [(c, m, round(w / total_w * 100, 2)) for c, m, w in raw_cats]
@@ -429,22 +457,27 @@ def stage4_calculate_scores(
             ce.marks_awarded = 0.0
 
     category_results = []
+    # Use overall pass mark as default category minimum when RFP doesn't specify one.
+    # This ensures every category shows a meaningful minimum (e.g. 70%).
+    overall_min = rules.threshold.overall_pass_mark or 0.0
+
     for cat in rules.scoring_categories:
         cat_criteria = [ce for ce in criteria_evals if ce.category == cat.category]
         marks_awarded = round(sum(ce.marks_awarded for ce in cat_criteria), 2)
         pct = round(marks_awarded / cat.max_marks * 100, 1) if cat.max_marks else 0.0
 
+        # Find explicit category minimum from RFP; ignore 0% (meaningless)
         min_pct: Optional[float] = None
         for cm in rules.threshold.category_minimums:
-            if cm.category == cat.category:
+            if cm.category == cat.category and cm.minimum_percent > 0:
                 min_pct = cm.minimum_percent
                 break
 
-        if min_pct is not None:
-            cat_passed = pct >= min_pct
-        else:
-            # No category minimum set — pass unless the category scored absolute zero
-            cat_passed = pct > 0
+        # Fall back to overall threshold % so every category shows a clear minimum
+        if min_pct is None and overall_min > 0:
+            min_pct = overall_min
+
+        cat_passed = pct >= min_pct if min_pct is not None else pct > 0
         weighted   = round((marks_awarded / cat.max_marks) * cat.weight_percent, 2) if cat.max_marks else 0.0
 
         category_results.append(
@@ -478,7 +511,14 @@ async def stage4b_check_disqualifiers(
     disq_criteria = [{"criterion": d} for d in disqualifiers]
     relevant_bid  = _extract_bid_sections(bid_text, disq_criteria, MAX_DISQ_CHARS)
 
-    prompt = f"""Check whether the vendor bid meets each mandatory requirement listed below.
+    prompt = f"""Check whether the vendor bid satisfies each mandatory requirement below.
+
+IMPORTANT RULES:
+- For document submission requirements (e.g. "Submission of Bank Guarantee required", "Power of Attorney"),
+  set met=true if the vendor mentions submitting or enclosing it, OR if the bid includes such documents.
+  Set met=false ONLY if the vendor explicitly states they are NOT providing it.
+- For eligibility criteria, set met=true if evidence exists in the bid.
+- Default to met=true when evidence is unclear — only flag met=false on clear non-compliance.
 
 VENDOR BID (relevant sections):
 {relevant_bid}
@@ -491,7 +531,7 @@ Return ONLY a JSON array:
   {{
     "condition": "<exact requirement text>",
     "met": true,
-    "note": "<evidence found or 'Not found in document'>"
+    "note": "<evidence from bid, or 'Not mentioned but no explicit refusal'>"
   }}
 ]"""
 

@@ -109,6 +109,11 @@ async def apply_override(request: OverrideRequest):
             else:
                 cat_result.passed = cat_result.percent_achieved > 0
 
+            # Ensure override recalculates weighted score correctly
+            cat_result.weighted_score = round(
+                (cat_result.marks_awarded / cat_result.max_marks) * cat_result.weight_percent, 2
+            ) if cat_result.max_marks else 0.0
+
     # Recalculate overall totals
     report.total_score = round(
         sum(cr.weighted_score for cr in report.category_results), 2

@@ -7,348 +7,434 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Outfit:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css?v=2" />
 </head>
 <body>
 
-<!-- ── Header ──────────────────────────────────────────────────────────────── -->
 <header>
   <div class="header-inner">
     <div class="header-logo">
       <div class="logo-icon">
-        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-          <polyline points="14 2 14 8 20 8"/>
-          <line x1="16" y1="13" x2="8" y2="13"/>
-          <line x1="16" y1="17" x2="8" y2="17"/>
-          <polyline points="10 9 9 9 8 9"/>
-        </svg>
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
       </div>
       <div>
         <div class="logo-text">RFP Evaluator</div>
         <div class="logo-sub">AI-Powered Tender Scoring</div>
       </div>
     </div>
-    <div class="header-badge">
+    <div class="header-right">
       <span class="ai-badge">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
-        Powered by Groq AI
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+        Groq AI
       </span>
+      <button class="btn-new hidden" id="new-eval-btn">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        New Evaluation
+      </button>
     </div>
   </div>
 </header>
 
 <main>
 
-  <!-- ── Upload Section ──────────────────────────────────────────────────── -->
-  <section class="card upload-card" id="upload-section">
-    <div class="section-label">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-      Upload Documents
+  <!-- ── Upload Section ────────────────────────────────────────────────── -->
+  <section id="upload-section">
+    <div class="upload-hero">
+      <div class="upload-hero-text">
+        <div class="section-pill">AI Evaluation Platform</div>
+        <h1>Evaluate Your Tender Bid</h1>
+        <p>Upload your RFP and vendor bid to get an instant AI-powered evaluation with scoring, gap analysis, and risk flags.</p>
+      </div>
+      <div class="upload-hero-steps">
+        <div class="hero-step"><span>1</span>Upload RFP Document</div>
+        <div class="hero-step-arrow">→</div>
+        <div class="hero-step"><span>2</span>Upload Vendor Bid</div>
+        <div class="hero-step-arrow">→</div>
+        <div class="hero-step"><span>3</span>Get AI Report</div>
+      </div>
     </div>
-    <h2 class="section-title">Evaluate Your Tender Bid</h2>
-    <p class="section-desc">Upload the RFP and vendor bid documents to start the AI-powered evaluation pipeline.</p>
 
-    <div class="upload-grid">
-      <div class="upload-zone" id="rfp-zone" data-target="rfp-input">
-        <div class="upload-zone-inner">
-          <div class="upload-icon-wrap rfp-icon">
-            <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+    <div class="upload-panel">
+      <div class="upload-grid">
+        <div class="upload-zone" id="rfp-zone">
+          <div class="upload-zone-bg rfp-bg"></div>
+          <div class="upload-zone-content">
+            <div class="upload-type-badge rfp-badge">RFP Document</div>
+            <div class="upload-icon rfp-icon">
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+            </div>
+            <div class="upload-label">Tender / RFP Document</div>
+            <div class="upload-hint">Contains evaluation criteria &amp; scoring rules</div>
+            <label class="upload-btn rfp-btn" for="rfp-input">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+              Choose File
+            </label>
+            <input type="file" id="rfp-input" accept=".pdf,.doc,.docx" hidden />
+            <div class="file-formats">PDF · DOC · DOCX</div>
+            <div class="file-chosen" id="rfp-name"></div>
           </div>
-          <h3>RFP / Tender Document</h3>
-          <p>Contains the evaluation criteria and scoring rules</p>
-          <label class="upload-btn" for="rfp-input">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-            Choose File
-          </label>
-          <input type="file" id="rfp-input" accept=".pdf,.doc,.docx" hidden />
-          <p class="file-hint">PDF &middot; DOC &middot; DOCX</p>
-          <div class="file-name" id="rfp-name"></div>
         </div>
-      </div>
 
-      <div class="vs-divider">
-        <div class="vs-line"></div>
-        <div class="vs-badge">VS</div>
-        <div class="vs-line"></div>
-      </div>
+        <div class="vs-col">
+          <div class="vs-circle">VS</div>
+        </div>
 
-      <div class="upload-zone" id="bid-zone" data-target="bid-input">
-        <div class="upload-zone-inner">
-          <div class="upload-icon-wrap bid-icon">
-            <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20 14.66V20a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h5.34"/><polygon points="18 2 22 6 12 16 8 16 8 12 18 2"/></svg>
+        <div class="upload-zone" id="bid-zone">
+          <div class="upload-zone-bg bid-bg"></div>
+          <div class="upload-zone-content">
+            <div class="upload-type-badge bid-badge">Vendor Bid</div>
+            <div class="upload-icon bid-icon">
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M20 14.66V20a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h5.34"/><polygon points="18 2 22 6 12 16 8 16 8 12 18 2"/></svg>
+            </div>
+            <div class="upload-label">Vendor Bid Document</div>
+            <div class="upload-hint">The vendor's response that will be scored</div>
+            <label class="upload-btn bid-btn" for="bid-input">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+              Choose File
+            </label>
+            <input type="file" id="bid-input" accept=".pdf,.doc,.docx" hidden />
+            <div class="file-formats">PDF · DOC · DOCX</div>
+            <div class="file-chosen" id="bid-name"></div>
           </div>
-          <h3>Vendor Bid Document</h3>
-          <p>The vendor&rsquo;s response that will be scored</p>
-          <label class="upload-btn bid-btn" for="bid-input">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-            Choose File
-          </label>
-          <input type="file" id="bid-input" accept=".pdf,.doc,.docx" hidden />
-          <p class="file-hint">PDF &middot; DOC &middot; DOCX</p>
-          <div class="file-name" id="bid-name"></div>
         </div>
       </div>
-    </div>
 
-    <button class="btn-primary full-width" id="evaluate-btn" disabled>
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-      Run Evaluation
-    </button>
-  </section>
-
-  <!-- ── Progress Section ────────────────────────────────────────────────── -->
-  <section class="card hidden" id="progress-section">
-    <div class="section-label">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
-      Processing
-    </div>
-    <h2 class="section-title">Evaluation in Progress</h2>
-    <p class="section-desc">Our AI pipeline is analyzing your documents. This may take 30–90 seconds.</p>
-
-    <div class="pipeline">
-      <div class="pipe-step" id="step-1">
-        <div class="pipe-num">1</div>
-        <div class="pipe-icon-wrap">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-        </div>
-        <div class="pipe-body">
-          <div class="pipe-title">Document Ingestion</div>
-          <div class="pipe-sub">Extracting text from uploaded documents</div>
-        </div>
-        <div class="pipe-badge pending">Pending</div>
-      </div>
-      <div class="pipe-connector"></div>
-
-      <div class="pipe-step" id="step-2">
-        <div class="pipe-num">2</div>
-        <div class="pipe-icon-wrap">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-        </div>
-        <div class="pipe-body">
-          <div class="pipe-title">Rule &amp; Criteria Extraction</div>
-          <div class="pipe-sub">Identifying scoring rules from the RFP</div>
-        </div>
-        <div class="pipe-badge pending">Pending</div>
-      </div>
-      <div class="pipe-connector"></div>
-
-      <div class="pipe-step" id="step-3">
-        <div class="pipe-num">3</div>
-        <div class="pipe-icon-wrap">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-        </div>
-        <div class="pipe-body">
-          <div class="pipe-title">Vendor Response Parsing</div>
-          <div class="pipe-sub">Mapping bid content to each criterion</div>
-        </div>
-        <div class="pipe-badge pending">Pending</div>
-      </div>
-      <div class="pipe-connector"></div>
-
-      <div class="pipe-step" id="step-4">
-        <div class="pipe-num">4</div>
-        <div class="pipe-icon-wrap">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
-        </div>
-        <div class="pipe-body">
-          <div class="pipe-title">Score Calculation</div>
-          <div class="pipe-sub">Applying weighted scoring rules &amp; checking disqualifiers</div>
-        </div>
-        <div class="pipe-badge pending">Pending</div>
-      </div>
-      <div class="pipe-connector"></div>
-
-      <div class="pipe-step" id="step-5">
-        <div class="pipe-num">5</div>
-        <div class="pipe-icon-wrap">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-        </div>
-        <div class="pipe-body">
-          <div class="pipe-title">Gap Analysis &amp; Risk Flagging</div>
-          <div class="pipe-sub">Identifying gaps, weak areas, and risks</div>
-        </div>
-        <div class="pipe-badge pending">Pending</div>
-      </div>
-      <div class="pipe-connector"></div>
-
-      <div class="pipe-step" id="step-6">
-        <div class="pipe-num">6</div>
-        <div class="pipe-icon-wrap">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/></svg>
-        </div>
-        <div class="pipe-body">
-          <div class="pipe-title">Report Generation</div>
-          <div class="pipe-sub">Compiling final evaluation report</div>
-        </div>
-        <div class="pipe-badge pending">Pending</div>
+      <div class="upload-footer">
+        <button class="btn-evaluate" id="evaluate-btn" disabled>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          Run Evaluation
+        </button>
+        <span class="upload-footer-note">Powered by Groq LLaMA — results in 30–90 seconds</span>
       </div>
     </div>
   </section>
 
-  <!-- ── Results Section ─────────────────────────────────────────────────── -->
+  <!-- ── Progress Section ──────────────────────────────────────────────── -->
+  <section id="progress-section" class="hidden">
+    <div class="progress-panel">
+      <div class="progress-header">
+        <div class="progress-spinner"></div>
+        <div>
+          <div class="progress-title">Evaluation in Progress</div>
+          <div class="progress-sub">AI pipeline analyzing your documents — this takes 30–90 seconds</div>
+        </div>
+      </div>
+      <div class="pipeline-grid">
+        <div class="pipe-step" id="step-1">
+          <div class="pipe-num">1</div>
+          <div class="pipe-body">
+            <div class="pipe-title">Document Ingestion</div>
+            <div class="pipe-sub">Extracting text from documents</div>
+          </div>
+          <div class="pipe-badge pending">Pending</div>
+        </div>
+        <div class="pipe-step" id="step-2">
+          <div class="pipe-num">2</div>
+          <div class="pipe-body">
+            <div class="pipe-title">Criteria Extraction</div>
+            <div class="pipe-sub">Finding scoring rules in RFP</div>
+          </div>
+          <div class="pipe-badge pending">Pending</div>
+        </div>
+        <div class="pipe-step" id="step-3">
+          <div class="pipe-num">3</div>
+          <div class="pipe-body">
+            <div class="pipe-title">Bid Evaluation</div>
+            <div class="pipe-sub">Mapping bid to each criterion</div>
+          </div>
+          <div class="pipe-badge pending">Pending</div>
+        </div>
+        <div class="pipe-step" id="step-4">
+          <div class="pipe-num">4</div>
+          <div class="pipe-body">
+            <div class="pipe-title">Score Calculation</div>
+            <div class="pipe-sub">Applying weighted scoring</div>
+          </div>
+          <div class="pipe-badge pending">Pending</div>
+        </div>
+        <div class="pipe-step" id="step-5">
+          <div class="pipe-num">5</div>
+          <div class="pipe-body">
+            <div class="pipe-title">Gap Analysis</div>
+            <div class="pipe-sub">Identifying risks &amp; gaps</div>
+          </div>
+          <div class="pipe-badge pending">Pending</div>
+        </div>
+        <div class="pipe-step" id="step-6">
+          <div class="pipe-num">6</div>
+          <div class="pipe-body">
+            <div class="pipe-title">Report Generation</div>
+            <div class="pipe-sub">Compiling final report</div>
+          </div>
+          <div class="pipe-badge pending">Pending</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Results Section ───────────────────────────────────────────────── -->
   <section id="results-section" class="hidden">
+    
+    <!-- Top-level dashboard structure with sidebar navigation -->
+    <div class="dashboard-container">
+      
+      <aside class="dashboard-sidebar">
+        <div class="sidebar-header">
+          <div class="sidebar-title">Report Sections</div>
+          <div class="sidebar-subtitle">Navigate details below</div>
+        </div>
+        
+        <div class="tabs-bar">
+          <button class="tab-btn active" data-tab="overview">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+            Overview Dashboard
+          </button>
+          <button class="tab-btn" data-tab="categories">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+            Score Breakdown
+          </button>
+          <button class="tab-btn" data-tab="details">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            Criterion Details
+          </button>
+          <button class="tab-btn" data-tab="checks">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+            Eligibility Checks
+          </button>
+          <button class="tab-btn" data-tab="risks">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+            Risk Flags
+          </button>
+          <button class="tab-btn" data-tab="override">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+            Reviewer Override
+          </button>
+        </div>
+      </aside>
 
-    <!-- Verdict Banner -->
-    <div id="verdict-banner" class="verdict-banner">
-      <div class="verdict-inner">
-        <div class="verdict-score-wrap">
-          <div class="verdict-ring-wrap">
-            <svg class="score-ring" viewBox="0 0 120 120">
-              <circle class="ring-bg" cx="60" cy="60" r="52"/>
-              <circle class="ring-fill" id="ring-fill" cx="60" cy="60" r="52"/>
-            </svg>
-            <div class="ring-text">
-              <div class="ring-score" id="v-score">--</div>
-              <div class="ring-max" id="v-max-ring">/100</div>
+      <div class="dashboard-content">
+        
+        <!-- Verdict Banner (Overall Score / Action Bar) -->
+        <div id="verdict-banner" class="verdict-banner">
+          <div class="verdict-left">
+            <div class="verdict-ring-wrap">
+              <svg class="score-ring" viewBox="0 0 120 120">
+                <circle class="ring-bg" cx="60" cy="60" r="52"/>
+                <circle class="ring-fill" id="ring-fill" cx="60" cy="60" r="52"/>
+              </svg>
+              <div class="ring-text">
+                <div class="ring-score" id="v-score">--</div>
+                <div class="ring-denom" id="v-max-ring">/100</div>
+              </div>
+            </div>
+            <div class="verdict-info">
+              <div class="verdict-label" id="v-label">--</div>
+              <div class="verdict-threshold" id="v-threshold">Threshold: --</div>
+              <div class="verdict-tags" id="verdict-meta"></div>
+            </div>
+          </div>
+          <div class="verdict-right">
+            <div id="verdict-kpis"></div>
+            <button class="btn-download-word" id="download-word-btn">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              Download Word Report
+            </button>
+          </div>
+        </div>
+
+        <!-- Disqualification Alert -->
+        <div class="disq-alert hidden" id="disq-alert">
+          <div class="disq-alert-inner">
+            <div class="disq-icon-wrap">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+            </div>
+            <div>
+              <div class="disq-alert-title">Automatic Disqualification</div>
+              <p id="disq-reason">--</p>
             </div>
           </div>
         </div>
-        <div class="verdict-info">
-          <div id="v-label" class="v-label">--</div>
-          <div id="v-threshold" class="v-threshold">Threshold: --</div>
-          <div class="verdict-meta" id="verdict-meta"></div>
+
+        <!-- Tab Panel: Overview -->
+        <div class="tab-panel active" id="tab-overview">
+          <div class="overview-layout">
+            <div class="overview-main">
+              <div class="panel">
+                <div class="panel-header">
+                  <div class="panel-header-icon summary-icon">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+                  </div>
+                  <h2>Executive Summary</h2>
+                </div>
+                <p id="exec-summary" class="summary-text">--</p>
+              </div>
+
+              <div class="panel" id="score-cards-panel">
+                <div class="panel-header">
+                  <div class="panel-header-icon chart-icon">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                  </div>
+                  <h2>Key Metrics</h2>
+                </div>
+                <div class="kpi-grid" id="score-cards"></div>
+              </div>
+            </div>
+
+            <div class="overview-side">
+              <div class="panel">
+                <div class="panel-header">
+                  <div class="panel-header-icon detail-icon">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+                  </div>
+                  <h2>Category Summary</h2>
+                </div>
+                <div id="overview-cats" class="overview-cats-list"></div>
+              </div>
+            </div>
+          </div>
         </div>
-      </div>
-    </div>
 
-    <!-- Executive Summary -->
-    <div class="card">
-      <div class="card-header">
-        <div class="card-header-icon summary-icon">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 14.66V20a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h5.34"/><polygon points="18 2 22 6 12 16 8 16 8 12 18 2"/></svg>
+        <!-- Tab Panel: Score Breakdown -->
+        <div class="tab-panel hidden" id="tab-categories">
+          <div class="panel">
+            <div class="panel-header">
+              <div class="panel-header-icon detail-icon">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+              </div>
+              <h2>Category Score Breakdown</h2>
+            </div>
+            <div class="table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Category</th>
+                    <th>Score</th>
+                    <th>Progress</th>
+                    <th>Max Marks</th>
+                    <th>Min Required</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody id="cat-tbody"></tbody>
+                <tfoot id="cat-tfoot"></tfoot>
+              </table>
+            </div>
+          </div>
         </div>
-        <h2>Executive Summary</h2>
-      </div>
-      <p id="exec-summary" class="summary-text">--</p>
-    </div>
 
-    <!-- Disqualification Alert -->
-    <div class="alert-disq hidden" id="disq-alert">
-      <div class="alert-icon">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
-      </div>
-      <div>
-        <div class="alert-title">Automatic Disqualification</div>
-        <p id="disq-reason">--</p>
-      </div>
-    </div>
-
-    <!-- Score Cards -->
-    <div class="score-cards" id="score-cards"></div>
-
-    <!-- Category Scores -->
-    <div class="card">
-      <div class="card-header">
-        <div class="card-header-icon chart-icon">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+        <!-- Tab Panel: Criterion Details -->
+        <div class="tab-panel hidden" id="tab-details">
+          <div class="panel">
+            <div class="panel-header">
+              <div class="panel-header-icon detail-icon">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              </div>
+              <h2>Criterion-Level Evaluation Details</h2>
+            </div>
+            <div id="criteria-accordion" class="accordion-container"></div>
+          </div>
         </div>
-        <h2>Category Score Breakdown</h2>
-      </div>
-      <div class="table-wrap">
-        <table class="data-table" id="cat-table">
-          <thead>
-            <tr>
-              <th>Category</th>
-              <th>Score</th>
-              <th>Progress</th>
-              <th>Max Marks</th>
-              <th>Min Required</th>
-              <th>Status</th>
-            </tr>
-          </thead>
-          <tbody id="cat-tbody"></tbody>
-          <tfoot id="cat-tfoot"></tfoot>
-        </table>
-      </div>
-    </div>
 
-    <!-- Mandatory Eligibility Checks -->
-    <div class="card" id="disq-checks-card">
-      <div class="card-header">
-        <div class="card-header-icon check-icon">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+        <!-- Tab Panel: Eligibility Checks -->
+        <div class="tab-panel hidden" id="tab-checks">
+          <div class="panel" id="disq-checks-card">
+            <div class="panel-header">
+              <div class="panel-header-icon check-icon">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+              </div>
+              <h2>Mandatory Eligibility Checks</h2>
+            </div>
+            <div class="table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Condition</th>
+                    <th>Status</th>
+                    <th>Notes</th>
+                  </tr>
+                </thead>
+                <tbody id="disq-tbody"></tbody>
+              </table>
+            </div>
+          </div>
         </div>
-        <h2>Mandatory Eligibility Checks</h2>
-      </div>
-      <div class="table-wrap">
-        <table class="data-table">
-          <thead>
-            <tr><th>Condition</th><th>Status</th><th>Notes</th></tr>
-          </thead>
-          <tbody id="disq-tbody"></tbody>
-        </table>
-      </div>
-    </div>
 
-    <!-- Criteria Detail Accordion -->
-    <div class="card">
-      <div class="card-header">
-        <div class="card-header-icon detail-icon">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <!-- Tab Panel: Risk Flags -->
+        <div class="tab-panel hidden" id="tab-risks">
+          <div class="panel">
+            <div class="panel-header">
+              <div class="panel-header-icon risk-icon">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>
+              </div>
+              <h2>Gap Analysis &amp; Risk Flags</h2>
+            </div>
+            <div id="risk-list" class="risk-list-container"></div>
+          </div>
         </div>
-        <h2>Criterion-Level Details</h2>
-      </div>
-      <div id="criteria-accordion"></div>
-    </div>
 
-    <!-- Gap Analysis -->
-    <div class="card">
-      <div class="card-header">
-        <div class="card-header-icon risk-icon">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        <!-- Tab Panel: Override -->
+        <div class="tab-panel hidden" id="tab-override">
+          <div class="panel">
+            <div class="panel-header">
+              <div class="panel-header-icon override-icon">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+              </div>
+              <h2>Reviewer Score Override</h2>
+            </div>
+            <p class="panel-desc">Manually adjust criterion scores. All overrides are logged in the justification and totals are recalculated.</p>
+            
+            <div class="override-form">
+              <div class="override-row">
+                <div class="override-field">
+                  <label for="ov-category">Category</label>
+                  <select id="ov-category"><option value="">— Select Category —</option></select>
+                </div>
+                <div class="override-field">
+                  <label for="ov-criterion">Criterion</label>
+                  <select id="ov-criterion"><option value="">— Select Criterion —</option></select>
+                </div>
+              </div>
+              
+              <div class="override-row">
+                <div class="override-field short">
+                  <label for="ov-marks">New Marks</label>
+                  <input type="number" id="ov-marks" placeholder="Marks" min="0" step="0.5" />
+                </div>
+                <div class="override-field">
+                  <label for="ov-reason">Reason / Justification</label>
+                  <input type="text" id="ov-reason" placeholder="Reason (optional)" />
+                </div>
+                <div class="override-action-cell">
+                  <button class="btn-add-override" id="ov-add-btn">Add Override</button>
+                </div>
+              </div>
+            </div>
+
+            <div id="ov-tags" class="override-tags-list"></div>
+            
+            <div class="override-footer">
+              <button class="btn-recalc" id="ov-apply-btn">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+                Recalculate with Overrides
+              </button>
+            </div>
+          </div>
         </div>
-        <h2>Gap Analysis &amp; Risk Flags</h2>
-      </div>
-      <div id="risk-list"></div>
-    </div>
 
-    <!-- Reviewer Override -->
-    <div class="card">
-      <div class="card-header">
-        <div class="card-header-icon override-icon">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-        </div>
-        <h2>Reviewer Override</h2>
       </div>
-      <p class="override-intro">Manually adjust scores and recalculate totals. All overrides are logged in the justification.</p>
-      <div class="override-grid">
-        <select id="ov-category"><option value="">— Select Category —</option></select>
-        <select id="ov-criterion"><option value="">— Select Criterion —</option></select>
-        <input type="number" id="ov-marks" placeholder="New marks" min="0" step="0.5" />
-        <input type="text" id="ov-reason" placeholder="Reason (optional)" />
-        <button class="btn-add" id="ov-add-btn">Add</button>
-      </div>
-      <div id="ov-tags"></div>
-      <button class="btn-primary" id="ov-apply-btn" style="margin-top:1.5rem">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
-        Recalculate with Overrides
-      </button>
     </div>
-
-    <div class="center-row" style="gap:1rem;display:flex;justify-content:center;flex-wrap:wrap">
-      <button class="btn-primary" id="download-word-btn" style="min-width:220px">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-        Download Word Report
-      </button>
-      <button class="btn-outline" id="new-eval-btn" style="min-width:220px">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
-        Start New Evaluation
-      </button>
-    </div>
-
   </section>
 </main>
 
 <footer>
   <div class="footer-inner">
-    <span>RFP Evaluator &mdash; 7-Stage AI Evaluation Pipeline</span>
-    <span class="footer-dot">·</span>
-    <span>Powered by Groq AI</span>
+    <span>RFP Evaluator — 6-Stage AI Evaluation Pipeline</span>
+    <span class="footer-sep">·</span>
+    <span>Powered by Groq AI + LLaMA 3</span>
   </div>
 </footer>
 
-<script src="app.js"></script>
+<script src="app.js?v=2"></script>
 </body>
 </html>

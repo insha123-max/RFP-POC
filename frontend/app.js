@@ -12,6 +12,25 @@ const bidZone     = document.getElementById("bid-zone");
 const rfpName     = document.getElementById("rfp-name");
 const bidName     = document.getElementById("bid-name");
 const evaluateBtn = document.getElementById("evaluate-btn");
+const newEvalBtn  = document.getElementById("new-eval-btn");
+
+/* ── Tab Switching Logic ────────────────────────────────────────────────── */
+document.querySelectorAll(".tab-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const tabName = btn.dataset.tab;
+    
+    // Deactivate all tabs & hide all panels
+    document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
+    document.querySelectorAll(".tab-panel").forEach(p => p.classList.add("hidden"));
+    
+    // Activate current tab & show current panel
+    btn.classList.add("active");
+    const targetPanel = document.getElementById("tab-" + tabName);
+    if (targetPanel) {
+      targetPanel.classList.remove("hidden");
+    }
+  });
+});
 
 /* ── File handling ──────────────────────────────────────────────────────── */
 function attachFileInput(input, zone, nameEl) {
@@ -74,12 +93,13 @@ async function runEvaluation() {
   const bidFile = bidInput.files[0];
   if (!rfpFile || !bidFile) return;
 
-  // Show progress, hide results
+  // Show progress, hide results & main button
   show("progress-section");
   hide("results-section");
+  if (newEvalBtn) hide("new-eval-btn");
   evaluateBtn.disabled = true;
 
-  // Approximate step timing (each Claude call takes ~5–15 s)
+  // Approximate step timing (each Claude/LLM call takes ~5–15 s)
   const timers = [
     setTimeout(() => setStep(1, "active"), 0),
     setTimeout(() => setStep(1, "done"),   900),
@@ -126,6 +146,7 @@ async function runEvaluation() {
     hide("progress-section");
     renderReport(currentReport);
     show("results-section");
+    if (newEvalBtn) show("new-eval-btn");
     document.getElementById("results-section").scrollIntoView({ behavior: "smooth" });
 
   } catch (e) {
@@ -138,6 +159,7 @@ async function runEvaluation() {
 function resetUI() {
   evaluateBtn.disabled = false;
   hide("progress-section");
+  if (newEvalBtn) hide("new-eval-btn");
   for (let i = 1; i <= 6; i++) setStep(i, "pending");
 }
 
@@ -151,6 +173,10 @@ function renderReport(report) {
   renderCriteriaAccordion(report);
   renderRisks(report);
   populateOverrideDropdowns(report);
+  
+  // Set back to Overview tab on initial render
+  const overviewTabBtn = document.querySelector('.tab-btn[data-tab="overview"]');
+  if (overviewTabBtn) overviewTabBtn.click();
 }
 
 /* Verdict banner */
@@ -244,12 +270,13 @@ function renderScoreCards(r) {
   }, 300);
 }
 
-/* Category breakdown */
+/* Category breakdown & Sidebar summaries */
 function renderCategories(r) {
   const tbody = el("cat-tbody");
   const tfoot = el("cat-tfoot");
-  tbody.innerHTML = "";
+  if (tbody) tbody.innerHTML = "";
   renderScoreCards(r);
+  renderCategorySummary(r);
 
   r.category_results.forEach(cat => {
     const hasMin = cat.minimum_required != null;
@@ -260,64 +287,94 @@ function renderCategories(r) {
     const statusTxt = hasMin
       ? badge(cat.passed ? "pass" : "fail", cat.passed ? "✓ Pass" : "✗ Fail")
       : `<span style="color:var(--muted);font-size:.8rem">No minimum set</span>`;
-    tbody.insertAdjacentHTML("beforeend", `
-      <tr>
-        <td><strong>${esc(cat.category)}</strong></td>
-        <td><strong>${cat.marks_awarded.toFixed(1)}</strong> <span style="color:var(--muted);font-size:.8rem">/ ${cat.max_marks}</span></td>
-        <td>
-          <div class="score-bar-wrap">
-            <div class="score-bar"><div class="score-bar-fill ${barClass}" style="width:${pct}%"></div></div>
-            <span class="score-bar-pct">${pct}%</span>
-          </div>
-        </td>
-        <td>${cat.max_marks}</td>
-        <td>${minTxt}</td>
-        <td>${statusTxt}</td>
-      </tr>`);
+    
+    if (tbody) {
+      tbody.insertAdjacentHTML("beforeend", `
+        <tr>
+          <td><strong>${esc(cat.category)}</strong></td>
+          <td><strong>${cat.marks_awarded.toFixed(1)}</strong> <span style="color:var(--muted);font-size:.8rem">/ ${cat.max_marks}</span></td>
+          <td>
+            <div class="score-bar-wrap">
+              <div class="score-bar"><div class="score-bar-fill ${barClass}" style="width:${pct}%"></div></div>
+              <span class="score-bar-pct">${pct}%</span>
+            </div>
+          </td>
+          <td>${cat.max_marks}</td>
+          <td>${minTxt}</td>
+          <td>${statusTxt}</td>
+        </tr>`);
+    }
   });
 
   const overallPct = r.max_score ? ((r.total_score / r.max_score) * 100).toFixed(1) : "0.0";
   const totalBarClass = parseFloat(overallPct) >= 70 ? "success" : parseFloat(overallPct) >= 40 ? "warning" : "danger";
-  tfoot.innerHTML = `
-    <tr>
-      <td><strong>Total (Weighted)</strong></td>
-      <td><strong>${r.total_score}</strong> <span style="color:var(--muted);font-size:.8rem">/ ${r.max_score}</span></td>
-      <td>
-        <div class="score-bar-wrap">
-          <div class="score-bar"><div class="score-bar-fill ${totalBarClass}" style="width:${overallPct}%"></div></div>
-          <span class="score-bar-pct">${overallPct}%</span>
+  
+  if (tfoot) {
+    tfoot.innerHTML = `
+      <tr>
+        <td><strong>Total (Weighted)</strong></td>
+        <td><strong>${r.total_score}</strong> <span style="color:var(--muted);font-size:.8rem">/ ${r.max_score}</span></td>
+        <td>
+          <div class="score-bar-wrap">
+            <div class="score-bar"><div class="score-bar-fill ${totalBarClass}" style="width:${overallPct}%"></div></div>
+            <span class="score-bar-pct">${overallPct}%</span>
+          </div>
+        </td>
+        <td>${r.max_score}</td>
+        <td>&ge; ${r.threshold}</td>
+        <td>${badge(r.passed ? "pass" : "fail", r.passed ? "✓ PASSED" : "✗ FAILED")}</td>
+      </tr>`;
+  }
+}
+
+/* Category summary column (Overview sidebar) */
+function renderCategorySummary(r) {
+  const container = el("overview-cats");
+  if (!container) return;
+  container.innerHTML = r.category_results.map(cat => {
+    const pct = cat.percent_achieved || 0;
+    const barClass = pct >= 70 ? "success" : pct >= 40 ? "warning" : "danger";
+    return `
+      <div class="cat-summary-row">
+        <div class="cat-summary-info">
+          <span class="cat-summary-name" title="${esc(cat.category)}">${esc(cat.category)}</span>
+          <span class="cat-summary-score">${cat.marks_awarded.toFixed(1)} / ${cat.max_marks}</span>
         </div>
-      </td>
-      <td>${r.max_score}</td>
-      <td>&ge; ${r.threshold}</td>
-      <td>${badge(r.passed ? "pass" : "fail", r.passed ? "✓ PASSED" : "✗ FAILED")}</td>
-    </tr>`;
+        <div class="cat-summary-bar">
+          <div class="cat-summary-bar-fill ${barClass}" style="width:${pct}%"></div>
+        </div>
+      </div>`;
+  }).join("");
 }
 
 /* Mandatory checks */
 function renderDisqualifierChecks(r) {
   const card  = document.getElementById("disq-checks-card");
   const tbody = el("disq-tbody");
-  tbody.innerHTML = "";
+  if (tbody) tbody.innerHTML = "";
 
   if (!r.disqualifier_checks || r.disqualifier_checks.length === 0) {
-    card.classList.add("hidden");
+    if (card) card.classList.add("hidden");
     return;
   }
-  card.classList.remove("hidden");
-  r.disqualifier_checks.forEach(d => {
-    tbody.insertAdjacentHTML("beforeend", `
-      <tr>
-        <td>${esc(d.condition)}</td>
-        <td>${badge(d.met ? "met" : "fail", d.met ? "✓ Met" : "✗ Not Met")}</td>
-        <td style="font-size:.82rem">${esc(d.note)}</td>
-      </tr>`);
-  });
+  if (card) card.classList.remove("hidden");
+  
+  if (tbody) {
+    r.disqualifier_checks.forEach(d => {
+      tbody.insertAdjacentHTML("beforeend", `
+        <tr>
+          <td>${esc(d.condition)}</td>
+          <td>${badge(d.met ? "met" : "fail", d.met ? "✓ Met" : "✗ Not Met")}</td>
+          <td style="font-size:.82rem">${esc(d.note)}</td>
+        </tr>`);
+    });
+  }
 }
 
 /* Criteria accordion (grouped by category) */
 function renderCriteriaAccordion(r) {
   const acc = el("criteria-accordion");
+  if (!acc) return;
   acc.innerHTML = "";
 
   r.category_results.forEach((cat, ci) => {
@@ -398,6 +455,7 @@ function renderRisks(r) {
 /* Override dropdowns */
 function populateOverrideDropdowns(r) {
   const catSel = el("ov-category");
+  if (!catSel) return;
   catSel.innerHTML = '<option value="">— Select Category —</option>';
   r.category_results.forEach(cat => {
     const opt = document.createElement("option");
@@ -405,130 +463,151 @@ function populateOverrideDropdowns(r) {
     opt.textContent = cat.category;
     catSel.appendChild(opt);
   });
-  el("ov-criterion").innerHTML = '<option value="">— Select Criterion —</option>';
+  const critSel = el("ov-criterion");
+  if (critSel) critSel.innerHTML = '<option value="">— Select Criterion —</option>';
 }
 
-el("ov-category").addEventListener("change", () => {
-  const catName = el("ov-category").value;
-  const critSel = el("ov-criterion");
-  critSel.innerHTML = '<option value="">— Select Criterion —</option>';
-  if (!catName || !currentReport) return;
-  const cat = currentReport.category_results.find(c => c.category === catName);
-  if (!cat) return;
-  cat.criteria.forEach(c => {
-    const opt = document.createElement("option");
-    opt.value = c.criterion;
-    opt.dataset.max = c.max_marks;
-    opt.textContent = c.criterion + " (max: " + c.max_marks + ")";
-    critSel.appendChild(opt);
+const ovCategoryEl = el("ov-category");
+if (ovCategoryEl) {
+  ovCategoryEl.addEventListener("change", () => {
+    const catName = el("ov-category").value;
+    const critSel = el("ov-criterion");
+    if (!critSel) return;
+    critSel.innerHTML = '<option value="">— Select Criterion —</option>';
+    if (!catName || !currentReport) return;
+    const cat = currentReport.category_results.find(c => c.category === catName);
+    if (!cat) return;
+    cat.criteria.forEach(c => {
+      const opt = document.createElement("option");
+      opt.value = c.criterion;
+      opt.dataset.max = c.max_marks;
+      opt.textContent = c.criterion + " (max: " + c.max_marks + ")";
+      critSel.appendChild(opt);
+    });
   });
-});
+}
 
-el("ov-add-btn").addEventListener("click", () => {
-  const category  = el("ov-category").value;
-  const criterion = el("ov-criterion").value;
-  const marks     = parseFloat(el("ov-marks").value);
-  const reason    = el("ov-reason").value.trim();
+const ovAddBtnEl = el("ov-add-btn");
+if (ovAddBtnEl) {
+  ovAddBtnEl.addEventListener("click", () => {
+    const category  = el("ov-category").value;
+    const criterion = el("ov-criterion").value;
+    const marks     = parseFloat(el("ov-marks").value);
+    const reason    = el("ov-reason").value.trim();
 
-  if (!category || !criterion || isNaN(marks) || marks < 0) {
-    alert("Please select a category, criterion, and enter a valid mark value.");
-    return;
-  }
+    if (!category || !criterion || isNaN(marks) || marks < 0) {
+      alert("Please select a category, criterion, and enter a valid mark value.");
+      return;
+    }
 
-  const opt = el("ov-criterion").querySelector(`option[value="${criterion}"]`);
-  const maxMarks = opt ? parseFloat(opt.dataset.max) : Infinity;
-  if (marks > maxMarks) {
-    alert("New marks (" + marks + ") exceed maximum (" + maxMarks + ") for this criterion.");
-    return;
-  }
+    const opt = el("ov-criterion").querySelector(`option[value="${criterion}"]`);
+    const maxMarks = opt ? parseFloat(opt.dataset.max) : Infinity;
+    if (marks > maxMarks) {
+      alert("New marks (" + marks + ") exceed maximum (" + maxMarks + ") for this criterion.");
+      return;
+    }
 
-  const idx = pendingOverrides.length;
-  pendingOverrides.push({ category, criterion, new_marks: marks, reason });
+    const idx = pendingOverrides.length;
+    pendingOverrides.push({ category, criterion, new_marks: marks, reason });
 
-  el("ov-tags").insertAdjacentHTML("beforeend", `
-    <span class="ov-tag" data-idx="${idx}">
-      ${esc(criterion)}: ${marks} marks
-      <span class="rm" onclick="removeOverride(${idx})">&times;</span>
-    </span>`);
+    const ovTagsEl = el("ov-tags");
+    if (ovTagsEl) {
+      ovTagsEl.insertAdjacentHTML("beforeend", `
+        <span class="ov-tag" data-idx="${idx}">
+          ${esc(criterion)}: ${marks} marks
+          <span class="rm" onclick="removeOverride(${idx})">&times;</span>
+        </span>`);
+    }
 
-  el("ov-marks").value  = "";
-  el("ov-reason").value = "";
-});
+    el("ov-marks").value  = "";
+    el("ov-reason").value = "";
+  });
+}
 
 window.removeOverride = function(idx) {
   pendingOverrides[idx] = null;
   document.querySelectorAll(`.ov-tag[data-idx="${idx}"]`).forEach(t => t.remove());
 };
 
-el("ov-apply-btn").addEventListener("click", async () => {
-  const active = pendingOverrides.filter(Boolean);
-  if (!active.length) { alert("No overrides to apply."); return; }
+const ovApplyBtnEl = el("ov-apply-btn");
+if (ovApplyBtnEl) {
+  ovApplyBtnEl.addEventListener("click", async () => {
+    const active = pendingOverrides.filter(Boolean);
+    if (!active.length) { alert("No overrides to apply."); return; }
 
-  try {
-    const res = await fetch("/api/override", {
-      method:  "POST",
-      headers: { "Content-Type": "application/json" },
-      body:    JSON.stringify({ report: currentReport, overrides: active }),
-    });
-    if (!res.ok) throw new Error(await res.text());
-    currentReport = await res.json();
-    pendingOverrides = [];
-    el("ov-tags").innerHTML = "";
-    renderReport(currentReport);
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  } catch (e) {
-    alert("Override failed: " + e.message);
-  }
-});
+    try {
+      const res = await fetch("/api/override", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ report: currentReport, overrides: active }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      currentReport = await res.json();
+      pendingOverrides = [];
+      const ovTagsEl = el("ov-tags");
+      if (ovTagsEl) ovTagsEl.innerHTML = "";
+      renderReport(currentReport);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    } catch (e) {
+      alert("Override failed: " + e.message);
+    }
+  });
+}
 
 /* Download Word report */
-el("download-word-btn").addEventListener("click", async () => {
-  if (!currentReport) return;
-  const btn = el("download-word-btn");
-  btn.disabled = true;
-  btn.textContent = "Generating…";
-  try {
-    const res = await fetch("/api/export/word", {
-      method:  "POST",
-      headers: { "Content-Type": "application/json" },
-      body:    JSON.stringify(currentReport),
-    });
-    if (!res.ok) throw new Error(await res.text());
-    const blob     = await res.blob();
-    const url      = URL.createObjectURL(blob);
-    const a        = document.createElement("a");
-    a.href         = url;
-    a.download     = `RFP_Evaluation_${currentReport.passed ? "PASSED" : "FAILED"}.docx`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
-  } catch (e) {
-    alert("Export failed: " + e.message);
-  } finally {
-    btn.disabled = false;
-    btn.innerHTML = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Download Word Report`;
-  }
-});
+const downloadWordBtnEl = el("download-word-btn");
+if (downloadWordBtnEl) {
+  downloadWordBtnEl.addEventListener("click", async () => {
+    if (!currentReport) return;
+    const btn = el("download-word-btn");
+    btn.disabled = true;
+    btn.textContent = "Generating…";
+    try {
+      const res = await fetch("/api/export/word", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify(currentReport),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const blob     = await res.blob();
+      const url      = URL.createObjectURL(blob);
+      const a        = document.createElement("a");
+      a.href         = url;
+      a.download     = `RFP_Evaluation_${currentReport.passed ? "PASSED" : "FAILED"}.docx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      alert("Export failed: " + e.message);
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Download Word Report`;
+    }
+  });
+}
 
 /* New evaluation */
-el("new-eval-btn").addEventListener("click", () => {
-  currentReport    = null;
-  pendingOverrides = [];
+if (newEvalBtn) {
+  newEvalBtn.addEventListener("click", () => {
+    currentReport    = null;
+    pendingOverrides = [];
 
-  rfpInput.value = "";
-  bidInput.value = "";
-  rfpName.textContent = "";
-  bidName.textContent = "";
-  rfpZone.classList.remove("has-file");
-  bidZone.classList.remove("has-file");
-  evaluateBtn.disabled = true;
+    rfpInput.value = "";
+    bidInput.value = "";
+    rfpName.textContent = "";
+    bidName.textContent = "";
+    rfpZone.classList.remove("has-file");
+    bidZone.classList.remove("has-file");
+    evaluateBtn.disabled = true;
 
-  for (let i = 1; i <= 6; i++) setStep(i, "pending");
-  hide("results-section");
-  hide("progress-section");
-  document.getElementById("upload-section").scrollIntoView({ behavior: "smooth" });
-});
+    for (let i = 1; i <= 6; i++) setStep(i, "pending");
+    hide("results-section");
+    hide("progress-section");
+    hide("new-eval-btn");
+    document.getElementById("upload-section").scrollIntoView({ behavior: "smooth" });
+  });
+}
 
 /* ── Helpers ────────────────────────────────────────────────────────────── */
 function el(id)             { return document.getElementById(id); }
