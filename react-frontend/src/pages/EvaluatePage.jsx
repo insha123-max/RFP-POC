@@ -95,7 +95,7 @@ export default function EvaluatePage() {
   const [phase, setPhase]         = useState('upload')   // upload | progress | error
   const [stepStates, setStepStates] = useState(STEPS.map(() => 'pending'))
   const [error, setError]         = useState('')
-  const { setReport, setRfpName, setBidName } = useEvaluation()
+  const { setReport, setRfpName, setBidName, addToHistory } = useEvaluation()
   const navigate = useNavigate()
 
   const advance = (idx, state) =>
@@ -122,6 +122,15 @@ export default function EvaluatePage() {
       setReport(report)
       setRfpName(rfpFile.name)
       setBidName(bidFile.name)
+      addToHistory({
+        id: Date.now(),
+        rfpName: rfpFile.name,
+        bidName: bidFile.name,
+        report,
+        timestamp: new Date().toISOString(),
+        score: Math.round((report.total_score / report.max_score) * 100),
+        passed: report.passed,
+      })
       setTimeout(() => navigate('/active-evaluation'), 500)
     } catch (e) {
       timers.forEach(clearTimeout)

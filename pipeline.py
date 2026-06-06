@@ -463,7 +463,10 @@ def stage4_calculate_scores(
 
     for cat in rules.scoring_categories:
         cat_criteria = [ce for ce in criteria_evals if ce.category == cat.category]
-        marks_awarded = round(sum(ce.marks_awarded for ce in cat_criteria), 2)
+        raw_marks    = round(sum(ce.marks_awarded for ce in cat_criteria), 2)
+        # Cap at category max — duplicate/overlapping criteria extracted across chunks
+        # can push the raw sum above max_marks, causing >100% scores.
+        marks_awarded = min(raw_marks, cat.max_marks)
         pct = round(marks_awarded / cat.max_marks * 100, 1) if cat.max_marks else 0.0
 
         # Find explicit category minimum from RFP; ignore 0% (meaningless)
