@@ -1,6 +1,23 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useEvaluation } from '../context/EvaluationContext'
+
+function useCountUp(target, duration = 900) {
+  const [val, setVal] = useState(0)
+  useEffect(() => {
+    const n = typeof target === 'string' ? parseInt(target) : target
+    if (!n || isNaN(n)) { setVal(0); return }
+    let start = null
+    const raf = ts => {
+      if (!start) start = ts
+      const p = Math.min((ts - start) / duration, 1)
+      setVal(Math.round((1 - Math.pow(1 - p, 3)) * n))
+      if (p < 1) requestAnimationFrame(raf)
+    }
+    requestAnimationFrame(raf)
+  }, [target])
+  return val
+}
 
 function formatDate(iso) {
   return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
@@ -20,16 +37,19 @@ function stripExt(name) {
 }
 
 /* ── Sub-components ─────────────────────────────────────────────────────── */
-function StatCard({ label, value, sub, icon, valueColor }) {
+function StatCard({ label, rawValue, suffix = '', sub, icon, valueColor }) {
+  const counted = useCountUp(rawValue ?? 0)
   return (
-    <div style={{ background: '#fff', border: '1px solid #E5E7EB', borderRadius: 12, padding: '1.25rem 1.5rem', boxShadow: '0 1px 3px rgba(0,0,0,.06)' }}>
+    <div className="card" style={{ padding: '1.25rem 1.5rem' }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
         <span style={{ fontSize: '0.8rem', color: '#6B7280', fontWeight: 500 }}>{label}</span>
-        <div style={{ width: 36, height: 36, borderRadius: 8, background: '#EEF2FF', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+        <div style={{ width: 36, height: 36, borderRadius: 8, background: '#EEF2FF', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, transition: 'transform .2s ease' }}>
           {icon}
         </div>
       </div>
-      <div style={{ fontSize: '1.75rem', fontWeight: 800, color: valueColor || '#111827', lineHeight: 1, marginBottom: '0.4rem' }}>{value}</div>
+      <div className="count-up" style={{ fontSize: '1.75rem', fontWeight: 800, color: valueColor || '#111827', lineHeight: 1, marginBottom: '0.4rem' }}>
+        {counted}{suffix}
+      </div>
       {sub && <div style={{ fontSize: '0.78rem', color: '#9CA3AF' }}>{sub}</div>}
     </div>
   )
@@ -37,9 +57,19 @@ function StatCard({ label, value, sub, icon, valueColor }) {
 
 function EvalCard({ entry, onView, onReport, onDelete }) {
   const [confirming, setConfirming] = useState(false)
+  const [hovered, setHovered] = useState(false)
 
   return (
-    <div style={{ border: '1px solid #E5E7EB', borderRadius: 10, padding: '1.25rem', background: '#fff', marginBottom: '0.75rem' }}>
+    <div
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        border: `1px solid ${hovered ? '#C7D2FE' : '#E5E7EB'}`,
+        borderRadius: 10, padding: '1.25rem', background: '#fff', marginBottom: '0.75rem',
+        transform: hovered ? 'translateX(4px)' : 'none',
+        boxShadow: hovered ? '0 4px 16px rgba(99,102,241,.1)' : 'none',
+        transition: 'all .22s cubic-bezier(.34,1.56,.64,1)',
+      }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 4 }}>
         <h3 style={{ fontWeight: 700, fontSize: '0.95rem', color: '#111827', marginRight: 12, flex: 1 }}>{stripExt(entry.rfpName)}</h3>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
@@ -156,9 +186,9 @@ export default function DashboardPage() {
   )
 
   return (
-    <div className="page-content">
+    <div className="page-content fade-in">
       <div style={{ marginBottom: '1.75rem' }}>
-        <h1 style={{ fontSize: '1.6rem', fontWeight: 800, color: '#111827', marginBottom: 4 }}>Procurement Dashboard</h1>
+        <h1 className="gradient-title" style={{ fontSize: '1.6rem', fontWeight: 800, marginBottom: 4 }}>Procurement Dashboard</h1>
         <p style={{ fontSize: '0.875rem', color: '#6B7280' }}>Overview of RFP evaluations and AI insights</p>
       </div>
 
@@ -167,22 +197,22 @@ export default function DashboardPage() {
       ) : (
         <>
           {/* Stat Cards */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: '1rem', marginBottom: '1.75rem' }}>
+          <div className="stagger" style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: '1rem', marginBottom: '1.75rem' }}>
             <StatCard
-              label="Total Evaluations" value={totalEvals} sub="All time"
+              label="Total Evaluations" rawValue={totalEvals} sub="All time"
               icon={svgIcon('M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6')}
             />
             <StatCard
-              label="Pass Rate" value={`${passRate}%`} sub={`${passCount} of ${totalEvals} passed`}
+              label="Pass Rate" rawValue={passRate} suffix="%" sub={`${passCount} of ${totalEvals} passed`}
               icon={svgIcon('M22 11.08V12a10 10 0 1 1-5.93-9.14M22 4 12 14.01l-3-2.99')}
               valueColor={passRate >= 70 ? '#16A34A' : passRate >= 40 ? '#D97706' : '#DC2626'}
             />
             <StatCard
-              label="Avg Score" value={`${avgScore}%`} sub="Across all evaluations"
+              label="Avg Score" rawValue={avgScore} suffix="%" sub="Across all evaluations"
               icon={svgIcon('M18 20V10M12 20V4M6 20v-6')}
             />
             <StatCard
-              label="Total Risk Items" value={totalRisks} sub="Identified across all evals"
+              label="Total Risk Items" rawValue={totalRisks} sub="Identified across all evals"
               icon={svgIcon('M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0zM12 9v4M12 17h.01')}
               valueColor={totalRisks > 5 ? '#DC2626' : '#111827'}
             />
@@ -226,7 +256,7 @@ export default function DashboardPage() {
                     info:    { bg: '#F5F3FF', border: '#DDD6FE', dot: '#8B5CF6' },
                   }[ins.type]
                   return (
-                    <div key={i} style={{ background: cfg.bg, border: `1px solid ${cfg.border}`, borderRadius: 8, padding: '0.65rem 0.875rem', marginBottom: '0.5rem', display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                    <div key={i} className="insight-row" style={{ background: cfg.bg, border: `1px solid ${cfg.border}`, borderRadius: 8, padding: '0.65rem 0.875rem', marginBottom: '0.5rem', display: 'flex', alignItems: 'flex-start', gap: 8 }}>
                       <div style={{ width: 8, height: 8, borderRadius: '50%', background: cfg.dot, flexShrink: 0, marginTop: 4 }} />
                       <span style={{ fontSize: '0.8rem', color: '#374151', lineHeight: 1.45 }}>{ins.text}</span>
                     </div>

@@ -77,7 +77,7 @@ export default function ExecutiveReportPage() {
   }
 
   return (
-    <div className="page-content">
+    <div className="page-content fade-in">
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '1.75rem' }}>
         <div>

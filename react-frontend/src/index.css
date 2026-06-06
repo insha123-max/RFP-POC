@@ -202,7 +202,128 @@ body {
 .dot-violet { background: #8B5CF6; }
 .dot-red    { background: #EF4444; }
 
-/* ── Animations ─────────────────────────────────────────────────────────── */
-@keyframes spin { to { transform: rotate(360deg); } }
-@keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
-.fade-in { animation: fadeIn .3s ease forwards; }
+/* ── Keyframes ───────────────────────────────────────────────────────────── */
+@keyframes spin           { to { transform: rotate(360deg); } }
+@keyframes slideUp        { from { opacity: 0; transform: translateY(22px); } to { opacity: 1; transform: none; } }
+@keyframes slideLeft      { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: none; } }
+@keyframes scaleIn        { from { opacity: 0; transform: scale(.88); } to { opacity: 1; transform: scale(1); } }
+@keyframes popIn          { 0% { opacity:0; transform:scale(.55); } 65% { transform:scale(1.12); } 100% { opacity:1; transform:scale(1); } }
+@keyframes fillBar        { from { width: 0; } }
+@keyframes growBar        { from { transform: scaleY(0); } to { transform: scaleY(1); } }
+@keyframes countFade      { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:none; } }
+@keyframes gradientMove   { 0%,100% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } }
+@keyframes shimmerSlide   { 0% { background-position: -200% center; } 100% { background-position: 200% center; } }
+@keyframes dotPulseGreen  { 0%,100% { box-shadow:0 0 0 0 rgba(34,197,94,.45); }  50% { box-shadow:0 0 0 6px rgba(34,197,94,0); } }
+@keyframes dotPulseAmber  { 0%,100% { box-shadow:0 0 0 0 rgba(245,158,11,.45); } 50% { box-shadow:0 0 0 6px rgba(245,158,11,0); } }
+@keyframes dotPulseBlue   { 0%,100% { box-shadow:0 0 0 0 rgba(79,70,229,.45); }  50% { box-shadow:0 0 0 6px rgba(79,70,229,0); } }
+@keyframes dotPulseRed    { 0%,100% { box-shadow:0 0 0 0 rgba(239,68,68,.45); }  50% { box-shadow:0 0 0 6px rgba(239,68,68,0); } }
+@keyframes dotPulseViolet { 0%,100% { box-shadow:0 0 0 0 rgba(139,92,246,.45); } 50% { box-shadow:0 0 0 6px rgba(139,92,246,0); } }
+@keyframes logoGlow       { 0%,100% { box-shadow:0 0 0 0 rgba(99,102,241,.5); }  50% { box-shadow:0 0 0 8px rgba(99,102,241,0); } }
+@keyframes navSlide       { from { opacity:0; transform:translateX(-8px); } to { opacity:1; transform:none; } }
+@keyframes skeletonShine  { 0% { background-position:-200% center; } 100% { background-position:200% center; } }
+
+/* ── Page & section entries ─────────────────────────────────────────────── */
+.fade-in { animation: slideUp .4s cubic-bezier(.22,.68,0,1.05) both; }
+
+/* Stagger direct children */
+.stagger > * { animation: slideUp .45s cubic-bezier(.22,.68,0,1.05) both; }
+.stagger > *:nth-child(1) { animation-delay: 0s;    }
+.stagger > *:nth-child(2) { animation-delay: .07s;  }
+.stagger > *:nth-child(3) { animation-delay: .14s;  }
+.stagger > *:nth-child(4) { animation-delay: .21s;  }
+.stagger > *:nth-child(5) { animation-delay: .28s;  }
+.stagger > *:nth-child(6) { animation-delay: .35s;  }
+.stagger > *:nth-child(7) { animation-delay: .42s;  }
+.stagger > *:nth-child(8) { animation-delay: .49s;  }
+
+/* Stagger page-content children on fade-in pages */
+.page-content.fade-in > * { animation: slideUp .5s cubic-bezier(.22,.68,0,1.05) both; }
+.page-content.fade-in > *:nth-child(1) { animation-delay: 0s;   }
+.page-content.fade-in > *:nth-child(2) { animation-delay: .08s; }
+.page-content.fade-in > *:nth-child(3) { animation-delay: .16s; }
+.page-content.fade-in > *:nth-child(4) { animation-delay: .24s; }
+.page-content.fade-in > *:nth-child(5) { animation-delay: .32s; }
+
+/* ── Card hover lift ────────────────────────────────────────────────────── */
+.card { transition: transform .22s ease, box-shadow .22s ease; }
+.card:hover { transform: translateY(-3px); box-shadow: 0 8px 28px rgba(0,0,0,.1); }
+
+/* ── Button micro-interactions ──────────────────────────────────────────── */
+.btn { transition: all .2s cubic-bezier(.34,1.56,.64,1) !important; }
+.btn:hover:not(:disabled)  { transform: translateY(-2px); }
+.btn:active:not(:disabled) { transform: scale(.96) translateY(0); transition-duration: .08s !important; }
+.btn-primary:hover:not(:disabled) { box-shadow: 0 6px 22px rgba(79,70,229,.42) !important; }
+.btn-outline:hover:not(:disabled) { box-shadow: 0 4px 12px rgba(0,0,0,.09); }
+
+/* ── Score bar entry animation ──────────────────────────────────────────── */
+.score-bar-fill { animation: fillBar .9s cubic-bezier(.22,.68,0,1.2) both; }
+
+/* ── Badge pop-in ───────────────────────────────────────────────────────── */
+.badge { animation: popIn .3s cubic-bezier(.34,1.56,.64,1) both; }
+
+/* ── Status dot pulse ───────────────────────────────────────────────────── */
+.dot-green  { animation: dotPulseGreen  2.2s ease-in-out infinite; }
+.dot-amber  { animation: dotPulseAmber  2.2s ease-in-out infinite; }
+.dot-blue   { animation: dotPulseBlue   2.2s ease-in-out infinite; }
+.dot-red    { animation: dotPulseRed    2.2s ease-in-out infinite; }
+.dot-violet { animation: dotPulseViolet 2.2s ease-in-out infinite; }
+
+/* ── Table row hover ────────────────────────────────────────────────────── */
+.tbl tbody tr { transition: background .18s ease; }
+.tbl tbody tr:hover { background: linear-gradient(90deg, #EEF2FF 0%, #FAFAFA 60%); }
+
+/* ── Nav item hover slide ───────────────────────────────────────────────── */
+.nav-item { transition: all .18s cubic-bezier(.34,1.56,.64,1) !important; }
+.nav-item:hover { transform: translateX(4px) !important; background: rgba(255,255,255,.09) !important; color: rgba(255,255,255,.9) !important; }
+.nav-item.active { position: relative; }
+.nav-item.active::before {
+  content: ''; position: absolute; left: 0; top: 4px; bottom: 4px;
+  width: 3px; border-radius: 0 3px 3px 0;
+  background: linear-gradient(180deg, #818CF8, #6366F1);
+  box-shadow: 0 0 8px rgba(99,102,241,.6);
+}
+
+/* ── Sidebar logo glow ──────────────────────────────────────────────────── */
+.sidebar-logo-icon { animation: logoGlow 3s ease-in-out infinite; transition: transform .2s ease; }
+.sidebar-logo-icon:hover { transform: scale(1.08); }
+
+/* ── Sidebar nav entry stagger ──────────────────────────────────────────── */
+.sidebar-nav .nav-item { animation: navSlide .4s ease both; }
+.sidebar-nav .nav-item:nth-child(1) { animation-delay: .05s; }
+.sidebar-nav .nav-item:nth-child(2) { animation-delay: .1s;  }
+.sidebar-nav .nav-item:nth-child(3) { animation-delay: .15s; }
+.sidebar-nav .nav-item:nth-child(4) { animation-delay: .2s;  }
+.sidebar-nav .nav-item:nth-child(5) { animation-delay: .25s; }
+.sidebar-nav .nav-item:nth-child(6) { animation-delay: .3s;  }
+
+/* ── Gradient animated title ────────────────────────────────────────────── */
+.gradient-title {
+  background: linear-gradient(120deg, #111827 0%, #4F46E5 45%, #8B5CF6 70%, #111827 100%);
+  background-size: 250% auto;
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  background-clip: text;
+  animation: gradientMove 5s ease infinite;
+}
+
+/* ── Skeleton loading ───────────────────────────────────────────────────── */
+.skeleton {
+  background: linear-gradient(90deg, #F0F0F0 25%, #E4E4E4 50%, #F0F0F0 75%);
+  background-size: 200% 100%;
+  animation: skeletonShine 1.6s ease infinite;
+  border-radius: 6px;
+}
+
+/* ── Analytics chart bar ────────────────────────────────────────────────── */
+.anim-bar {
+  transform-origin: bottom;
+  animation: growBar .7s cubic-bezier(.34,1.1,.64,1) both;
+}
+
+/* ── Count number entry ─────────────────────────────────────────────────── */
+.count-up { animation: countFade .5s ease both; }
+
+/* ── Insight row slide in ────────────────────────────────────────────────── */
+.insight-row { animation: slideLeft .4s ease both; }
+.insight-row:nth-child(1) { animation-delay: .1s; }
+.insight-row:nth-child(2) { animation-delay: .18s; }
+.insight-row:nth-child(3) { animation-delay: .26s; }

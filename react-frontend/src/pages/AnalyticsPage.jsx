@@ -1,5 +1,23 @@
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useEvaluation } from '../context/EvaluationContext'
+
+function useCountUp(target, duration = 900) {
+  const [val, setVal] = useState(0)
+  useEffect(() => {
+    const n = typeof target === 'string' ? parseInt(target) : target
+    if (!n || isNaN(n)) { setVal(0); return }
+    let start = null
+    const raf = ts => {
+      if (!start) start = ts
+      const p = Math.min((ts - start) / duration, 1)
+      setVal(Math.round((1 - Math.pow(1 - p, 3)) * n))
+      if (p < 1) requestAnimationFrame(raf)
+    }
+    requestAnimationFrame(raf)
+  }, [target])
+  return val
+}
 
 function stripExt(name) {
   return name ? name.replace(/\.[^.]+$/, '') : '—'
@@ -22,14 +40,34 @@ function getMonthlyData(history) {
 function BarChart({ data }) {
   const maxVal = Math.max(...data.map(m => m.count), 1)
   return (
-    <div style={{ display: 'flex', alignItems: 'flex-end', gap: '1rem', height: 140, padding: '0 0.5rem' }}>
-      {data.map(m => (
-        <div key={`${m.label}-${m.year}`} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
-          <div style={{ fontSize: '0.68rem', fontWeight: 700, color: m.count > 0 ? '#4F46E5' : '#D1D5DB' }}>{m.count}</div>
-          <div style={{ width: '100%', borderRadius: '4px 4px 0 0', height: `${(m.count / maxVal) * 100}px`, background: m.count > 0 ? 'linear-gradient(180deg, #6366F1, #4F46E5)' : '#F1F5F9', minHeight: 8 }} />
-          <div style={{ fontSize: '0.72rem', color: '#9CA3AF' }}>{m.label}</div>
-        </div>
-      ))}
+    <div style={{ display: 'flex', alignItems: 'flex-end', gap: '1rem', height: 160, padding: '0 0.5rem' }}>
+      {data.map((m, i) => {
+        const barH = Math.max((m.count / maxVal) * 120, m.count > 0 ? 10 : 8)
+        return (
+          <div key={`${m.label}-${m.year}`} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+            <div style={{ fontSize: '0.7rem', fontWeight: 700, color: m.count > 0 ? '#4F46E5' : '#D1D5DB', minHeight: 16 }}>
+              {m.count > 0 ? m.count : ''}
+            </div>
+            <div style={{ width: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', height: 120 }}>
+              <div
+                className="anim-bar"
+                style={{
+                  width: '100%', borderRadius: '6px 6px 0 0',
+                  height: barH,
+                  background: m.count > 0
+                    ? 'linear-gradient(180deg, #818CF8 0%, #4F46E5 100%)'
+                    : '#F1F5F9',
+                  animationDelay: `${i * 0.08}s`,
+                  boxShadow: m.count > 0 ? '0 -2px 8px rgba(99,102,241,.3)' : 'none',
+                  transition: 'height .3s ease',
+                  cursor: m.count > 0 ? 'pointer' : 'default',
+                }}
+              />
+            </div>
+            <div style={{ fontSize: '0.72rem', color: '#9CA3AF', fontWeight: 500 }}>{m.label}</div>
+          </div>
+        )
+      })}
     </div>
   )
 }
@@ -112,25 +150,33 @@ export default function AnalyticsPage() {
   }
 
   const kpis = [
-    { label: 'Total Evaluations', value: totalEvals,     note: 'all time' },
-    { label: 'Avg Score',         value: `${avgScore}%`, note: 'across all evaluations' },
-    { label: 'Pass Rate',         value: `${passRate}%`, note: `${passCount} of ${totalEvals} passed` },
-    { label: 'High Risk Items',   value: highRisks,      note: 'across all evaluations' },
+    { label: 'Total Evaluations', note: 'all time' },
+    { label: 'Avg Score',         note: 'across all evaluations', suffix: '%' },
+    { label: 'Pass Rate',         note: `${passCount} of ${totalEvals} passed`, suffix: '%' },
+    { label: 'High Risk Items',   note: 'across all evaluations' },
   ]
 
+  const cTotalEvals = useCountUp(totalEvals)
+  const cAvgScore   = useCountUp(avgScore)
+  const cPassRate   = useCountUp(passRate)
+  const cHighRisks  = useCountUp(highRisks)
+  const kpiCounted  = [cTotalEvals, cAvgScore, cPassRate, cHighRisks]
+
   return (
-    <div className="page-content">
+    <div className="page-content fade-in">
       <div style={{ marginBottom: '1.75rem' }}>
-        <h1 style={{ fontSize: '1.6rem', fontWeight: 800, color: '#111827', marginBottom: 4 }}>Analytics</h1>
+        <h1 className="gradient-title" style={{ fontSize: '1.6rem', fontWeight: 800, marginBottom: 4 }}>Analytics</h1>
         <p style={{ fontSize: '0.875rem', color: '#6B7280' }}>Platform performance and evaluation insights</p>
       </div>
 
       {/* KPIs */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: '1rem', marginBottom: '1.75rem' }}>
-        {kpis.map(k => (
-          <div key={k.label} style={{ background: '#fff', border: '1px solid #E5E7EB', borderRadius: 12, padding: '1.25rem', boxShadow: '0 1px 3px rgba(0,0,0,.06)' }}>
+      <div className="stagger" style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: '1rem', marginBottom: '1.75rem' }}>
+        {kpis.map((k, i) => (
+          <div key={k.label} className="card" style={{ padding: '1.25rem' }}>
             <div style={{ fontSize: '0.78rem', color: '#6B7280', marginBottom: '0.5rem' }}>{k.label}</div>
-            <div style={{ fontSize: '1.65rem', fontWeight: 800, color: '#111827', lineHeight: 1, marginBottom: '0.4rem' }}>{k.value}</div>
+            <div className="count-up" style={{ fontSize: '1.65rem', fontWeight: 800, color: '#111827', lineHeight: 1, marginBottom: '0.4rem' }}>
+              {kpiCounted[i]}{k.suffix || ''}
+            </div>
             <div style={{ fontSize: '0.72rem', color: '#9CA3AF' }}>{k.note}</div>
           </div>
         ))}
