@@ -25,16 +25,19 @@ from models import (
 load_dotenv()
 
 # Model fallback list — tried in order when daily/per-request limits are hit
-# llama-3.1-8b-instant : 500K tokens/day,  6K TPM  (primary — highest daily quota)
+# llama-3.1-8b-instant : 500K tokens/day,  6K TP
+# M  (primary — highest daily quota)
 # llama-3.3-70b-versatile: 100K tokens/day, 12K TPM  (fallback — better quality)
 _MODELS = ["llama-3.1-8b-instant", "llama-3.3-70b-versatile"]
 MODEL_NAME     = _MODELS[0]
 
 # Chunk sizes calibrated for llama-3.1-8b-instant's 6K TPM limit.
 # At ~1.5 tokens/char for dense docs: 3000 chars ≈ 4500 tokens → safe under 6K.
+# MAX_BID_CHARS / MAX_DISQ_CHARS kept at 4000 so each per-category call stays
+# under ~7500 tokens (input + prompt overhead), within the 12K TPM fallback model.
 MAX_RFP_CHARS  =  15_000
-MAX_BID_CHARS  =  15_000
-MAX_DISQ_CHARS =  15_000
+MAX_BID_CHARS  =   4_000
+MAX_DISQ_CHARS =   4_000
 
 SYSTEM = (
     "You are an expert RFP (Request for Proposal) / Tender Evaluation Assistant. "
