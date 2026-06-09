@@ -164,6 +164,7 @@ function OverridePanel({ report, onUpdate }) {
   const [reason, setReason] = useState('')
   const [pending, setPending] = useState([])
   const [loading, setLoading] = useState(false)
+  const [success, setSuccess] = useState(false)
 
   const catObj  = report?.category_results?.find(c => c.category === cat)
   const critObj = catObj?.criteria?.find(c => c.criterion === crit)
@@ -174,15 +175,19 @@ function OverridePanel({ report, onUpdate }) {
     if (isNaN(m) || m < 0 || (critObj && m > critObj.max_marks)) return alert('Invalid marks')
     setPending(p => [...p, { category: cat, criterion: crit, new_marks: m, reason }])
     setMarks(''); setReason('')
+    setSuccess(false)
   }
 
   const recalculate = async () => {
     if (!pending.length) return
     setLoading(true)
+    setSuccess(false)
     try {
       const updated = await applyOverride(report, pending)
       onUpdate(updated)
       setPending([])
+      setSuccess(true)
+      setTimeout(() => setSuccess(false), 4000)
     } catch (e) { alert(e.message) }
     setLoading(false)
   }
@@ -212,7 +217,7 @@ function OverridePanel({ report, onUpdate }) {
           <label style={{ fontSize: '0.7rem', fontWeight: 700, color: '#6B7280', display: 'block', marginBottom: 4, textTransform: 'uppercase' }}>Criterion</label>
           <select style={sel} value={crit} onChange={e => setCrit(e.target.value)} disabled={!cat}>
             <option value="">Select criterion</option>
-            {catObj?.criteria.map(c => <option key={c.criterion}>{c.criterion} (max {c.max_marks})</option>)}
+            {catObj?.criteria.map(c => <option key={c.criterion} value={c.criterion}>{c.criterion} (max {c.max_marks})</option>)}
           </select>
         </div>
         <div>
@@ -241,6 +246,14 @@ function OverridePanel({ report, onUpdate }) {
               {loading ? 'Recalculating…' : '↻ Recalculate'}
             </button>
           </div>
+        </div>
+      )}
+      {success && (
+        <div style={{ marginTop: '0.875rem', display: 'flex', alignItems: 'center', gap: 8, background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 8, padding: '0.6rem 0.875rem' }}>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#16A34A" strokeWidth="2.5">
+            <path d="M20 6L9 17l-5-5"/>
+          </svg>
+          <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#15803D' }}>Scores successfully recalculated</span>
         </div>
       )}
     </div>
