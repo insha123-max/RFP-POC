@@ -1,9 +1,10 @@
 import { NavLink } from 'react-router-dom'
 import { useEvaluation } from '../context/EvaluationContext'
 
-const Icon = ({ d, size = 16 }) => (
+const Icon = ({ d, size = 18 }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
-    stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"
+    style={{ flexShrink: 0 }}>
     <path d={d} />
   </svg>
 )
@@ -25,20 +26,13 @@ export default function Sidebar() {
 
   return (
     <aside className="sidebar">
-      <div className="sidebar-logo">
-        <div className="sidebar-logo-icon">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2">
-            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-            <polyline points="14 2 14 8 20 8"/>
-            <line x1="16" y1="13" x2="8" y2="13"/>
-            <line x1="16" y1="17" x2="8" y2="17"/>
-          </svg>
-        </div>
+      <NavLink to="/" className="sidebar-logo" style={{ textDecoration: 'none', cursor: 'pointer' }}>
+        <img src="/logo.png" alt="BidEval AI" style={{ width: 38, height: 38, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
         <div>
           <div className="sidebar-logo-text">BidEval AI</div>
           <div className="sidebar-logo-sub">Procurement Platform</div>
         </div>
-      </div>
+      </NavLink>
 
       <nav className="sidebar-nav">
         {NAV.map(({ to, end, label, icon }) => (
@@ -50,10 +44,20 @@ export default function Sidebar() {
       </nav>
 
       <div className="sidebar-footer">
-        <div className="ai-confidence-label">AI Confidence</div>
-        <div className="ai-confidence-row">
-          <span className="ai-confidence-val">{score}%</span>
-          <span className="ai-confidence-sub">Avg. Score</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{
+            width: 32, height: 32, borderRadius: '50%',
+            background: 'rgba(255,255,255,.08)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+          }}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.5)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z"/>
+            </svg>
+          </div>
+          <div>
+            <div style={{ fontSize: '0.8rem', fontWeight: 600, color: 'rgba(255,255,255,.75)', lineHeight: 1.2 }}>BidEval AI</div>
+            <div style={{ fontSize: '0.7rem', color: 'rgba(255,255,255,.3)', marginTop: 1 }}>v1.0 · Powered by Groq</div>
+          </div>
         </div>
       </div>
     </aside>

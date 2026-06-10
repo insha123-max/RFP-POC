@@ -80,7 +80,7 @@ function UploadZone({ label, sub, file, onFile, accent }) {
       style={{
         border: `2px dashed ${file ? '#22C55E' : over ? accent : '#CBD5E1'}`,
         borderRadius: 12, padding: '2.5rem 2rem', textAlign: 'center',
-        cursor: 'pointer', background: file ? '#F0FDF4' : over ? '#F5F3FF' : '#FAFAFA',
+        cursor: 'pointer', background: file ? '#F0FDF4' : over ? '#FEF0E8' : '#FAFAFA',
         transition: 'all .2s', flex: 1,
       }}
     >
@@ -88,7 +88,7 @@ function UploadZone({ label, sub, file, onFile, accent }) {
         onChange={e => set(e.target.files[0])} />
       <div style={{
         width: 52, height: 52, borderRadius: 12, margin: '0 auto 1rem',
-        background: file ? '#DCFCE7' : '#EEF2FF',
+        background: file ? '#DCFCE7' : '#FEF0E8',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
       }}>
         <svg width="26" height="26" viewBox="0 0 24 24" fill="none"
@@ -122,16 +122,16 @@ function StepCard({ step, state }) {
     <div style={{
       borderRadius: 18,
       padding: '2rem 1.75rem',
-      border: `2px solid ${isDone ? '#22C55E' : isActive ? '#6366F1' : '#E2E8F0'}`,
+      border: `2px solid ${isDone ? '#22C55E' : isActive ? '#F26522' : '#E2E8F0'}`,
       background: isDone
         ? 'linear-gradient(135deg, #F0FDF4 0%, #DCFCE7 100%)'
         : isActive
-          ? 'linear-gradient(135deg, #EEF2FF 0%, #E0E7FF 100%)'
+          ? 'linear-gradient(135deg, #FEF0E8 0%, #FDE8D8 100%)'
           : '#F8FAFC',
       boxShadow: isDone
         ? '0 4px 24px rgba(34,197,94,.15)'
         : isActive
-          ? '0 4px 24px rgba(99,102,241,.2), 0 0 0 4px rgba(99,102,241,.08)'
+          ? '0 4px 24px rgba(242,101,34,.2), 0 0 0 4px rgba(242,101,34,.08)'
           : '0 1px 4px rgba(0,0,0,.04)',
       transition: 'all .4s cubic-bezier(.34,1.56,.64,1)',
       animation: isActive ? 'cardIn .35s ease-out' : isDone ? 'cardDone .35s ease-out' : 'none',
@@ -157,11 +157,11 @@ function StepCard({ step, state }) {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div style={{
           width: 32, height: 32, borderRadius: '50%', flexShrink: 0,
-          background: isDone ? '#22C55E' : isActive ? '#6366F1' : '#E2E8F0',
+          background: isDone ? '#22C55E' : isActive ? '#F26522' : '#E2E8F0',
           color: isPending ? '#94A3B8' : '#fff',
           fontSize: '0.78rem', fontWeight: 800,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
-          boxShadow: isActive ? '0 0 0 6px rgba(99,102,241,.2)' : 'none',
+          boxShadow: isActive ? '0 0 0 6px rgba(242,101,34,.2)' : 'none',
           animation: isActive ? 'pulseRing 1.6s ease-in-out infinite' : 'none',
           transition: 'all .3s',
         }}>
@@ -172,13 +172,13 @@ function StepCard({ step, state }) {
 
         <span style={{
           fontSize: '0.7rem', fontWeight: 700, padding: '4px 12px', borderRadius: 999,
-          background: isDone ? '#DCFCE7' : isActive ? '#E0E7FF' : '#F1F5F9',
-          color: isDone ? '#15803D' : isActive ? '#4338CA' : '#94A3B8',
+          background: isDone ? '#DCFCE7' : isActive ? '#FEF0E8' : '#F1F5F9',
+          color: isDone ? '#15803D' : isActive ? '#D4541A' : '#94A3B8',
           display: 'flex', alignItems: 'center', gap: 5,
         }}>
           {isActive && (
             <span style={{
-              width: 7, height: 7, borderRadius: '50%', background: '#6366F1',
+              width: 7, height: 7, borderRadius: '50%', background: '#F26522',
               animation: 'dotPulse .8s ease-in-out infinite alternate', display: 'inline-block',
             }}/>
           )}
@@ -189,8 +189,8 @@ function StepCard({ step, state }) {
       {/* Icon */}
       <div style={{
         width: 64, height: 64, borderRadius: 16,
-        background: isDone ? '#DCFCE7' : isActive ? '#C7D2FE' : '#E2E8F0',
-        color: isDone ? '#16A34A' : isActive ? '#4F46E5' : '#94A3B8',
+        background: isDone ? '#DCFCE7' : isActive ? '#FDE8D8' : '#E2E8F0',
+        color: isDone ? '#16A34A' : isActive ? '#F26522' : '#94A3B8',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         transition: 'all .3s',
         animation: isDone ? 'iconPop .4s cubic-bezier(.34,1.56,.64,1)' : 'none',
@@ -202,19 +202,19 @@ function StepCard({ step, state }) {
       <div>
         <div style={{
           fontWeight: 800, fontSize: '1rem',
-          color: isDone ? '#15803D' : isActive ? '#3730A3' : '#94A3B8',
+          color: isDone ? '#15803D' : isActive ? '#D4541A' : '#94A3B8',
           marginBottom: 4, transition: 'color .3s',
         }}>{step.label}</div>
-        <div style={{ fontSize: '0.8rem', color: isDone ? '#16A34A' : isActive ? '#6366F1' : '#CBD5E1', lineHeight: 1.45 }}>
+        <div style={{ fontSize: '0.8rem', color: isDone ? '#16A34A' : isActive ? '#F26522' : '#CBD5E1', lineHeight: 1.45 }}>
           {step.sub}
         </div>
       </div>
 
       {/* Active — animated progress bar at bottom */}
       {isActive && (
-        <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 4, background: '#E0E7FF', borderRadius: '0 0 16px 16px' }}>
+        <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 4, background: '#FEF0E8', borderRadius: '0 0 16px 16px' }}>
           <div style={{
-            height: '100%', background: 'linear-gradient(90deg, #6366F1, #8B5CF6)',
+            height: '100%', background: 'linear-gradient(90deg, #F26522, #F5823A)',
             borderRadius: '0 0 16px 16px',
             animation: 'progressBar 3s ease-in-out infinite',
           }}/>
@@ -287,7 +287,7 @@ export default function EvaluatePage() {
         <style>{`
           @keyframes spin        { to { transform: rotate(360deg); } }
           @keyframes shimmer     { 0% { background-position: -200% center; } 100% { background-position: 200% center; } }
-          @keyframes pulseRing   { 0%,100% { box-shadow: 0 0 0 0 rgba(99,102,241,.4); } 50% { box-shadow: 0 0 0 10px rgba(99,102,241,0); } }
+          @keyframes pulseRing   { 0%,100% { box-shadow: 0 0 0 0 rgba(242,101,34,.4); } 50% { box-shadow: 0 0 0 10px rgba(242,101,34,0); } }
           @keyframes dotPulse    { from { opacity: .4; transform: scale(.8); } to { opacity: 1; transform: scale(1.2); } }
           @keyframes cardIn      { from { opacity: 0; transform: translateY(12px) scale(.97); } to { opacity: 1; transform: translateY(0) scale(1); } }
           @keyframes cardDone    { 0% { transform: scale(1); } 40% { transform: scale(1.03); } 100% { transform: scale(1); } }
@@ -307,17 +307,17 @@ export default function EvaluatePage() {
           </div>
 
           {/* Spinner + step counter */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 14, background: '#EEF2FF', borderRadius: 12, padding: '0.75rem 1.25rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14, background: '#FEF0E8', borderRadius: 12, padding: '0.75rem 1.25rem' }}>
             <div style={{
               width: 28, height: 28, borderRadius: '50%', flexShrink: 0,
-              border: '3px solid #C7D2FE', borderTop: '3px solid #6366F1',
+              border: '3px solid #FDE8D8', borderTop: '3px solid #F26522',
               animation: 'spin 1s linear infinite',
             }}/>
             <div>
-              <div style={{ fontWeight: 700, fontSize: '0.875rem', color: '#3730A3' }}>
+              <div style={{ fontWeight: 700, fontSize: '0.875rem', color: '#D4541A' }}>
                 Step {Math.min(doneCount + 1, STEPS.length)} of {STEPS.length}
               </div>
-              <div style={{ fontSize: '0.72rem', color: '#6366F1' }}>Do not close this window</div>
+              <div style={{ fontSize: '0.72rem', color: '#F26522' }}>Do not close this window</div>
             </div>
           </div>
         </div>
@@ -326,12 +326,12 @@ export default function EvaluatePage() {
         <div style={{ marginBottom: '2rem' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
             <span style={{ fontSize: '0.78rem', fontWeight: 600, color: '#64748B' }}>Overall Progress</span>
-            <span style={{ fontSize: '0.78rem', fontWeight: 700, color: '#6366F1' }}>{progressPct}%</span>
+            <span style={{ fontSize: '0.78rem', fontWeight: 700, color: '#F26522' }}>{progressPct}%</span>
           </div>
           <div style={{ height: 8, background: '#E2E8F0', borderRadius: 999, overflow: 'hidden' }}>
             <div style={{
               height: '100%', borderRadius: 999,
-              background: 'linear-gradient(90deg, #6366F1, #8B5CF6)',
+              background: 'linear-gradient(90deg, #F26522, #F5823A)',
               width: `${progressPct}%`,
               transition: 'width .6s cubic-bezier(.34,1.56,.64,1)',
             }}/>
@@ -378,7 +378,7 @@ export default function EvaluatePage() {
               <UploadZone
                 label="RFP / Tender Document"
                 sub="Contains evaluation criteria and scoring rules"
-                file={rfpFile} onFile={setRfpFile} accent="#6366F1"
+                file={rfpFile} onFile={setRfpFile} accent="#F26522"
               />
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                 <div style={{
@@ -390,7 +390,7 @@ export default function EvaluatePage() {
               <UploadZone
                 label="Vendor Bid Document"
                 sub="The vendor's response to be evaluated"
-                file={bidFile} onFile={setBidFile} accent="#8B5CF6"
+                file={bidFile} onFile={setBidFile} accent="#F5823A"
               />
             </div>
 
@@ -463,8 +463,8 @@ export default function EvaluatePage() {
             <div style={{ fontWeight: 700, marginBottom: '1.25rem', color: '#1E293B' }}>How it works</div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               {[
-                { n: '01', t: 'Upload Documents',  d: 'Upload the RFP and vendor bid in PDF or Word format', color: '#6366F1' },
-                { n: '02', t: 'AI Extracts Rules', d: 'AI reads the RFP and extracts all scoring criteria and weights', color: '#8B5CF6' },
+                { n: '01', t: 'Upload Documents',  d: 'Upload the RFP and vendor bid in PDF or Word format', color: '#F26522' },
+                { n: '02', t: 'AI Extracts Rules', d: 'AI reads the RFP and extracts all scoring criteria and weights', color: '#F5823A' },
                 { n: '03', t: 'Get Results',       d: 'Receive detailed scores, gap analysis, and PASS/FAIL verdict', color: '#22C55E' },
               ].map(s => (
                 <div key={s.n} style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
@@ -501,18 +501,18 @@ export default function EvaluatePage() {
           </div>
 
           <div className="card" style={{
-            padding: '1.25rem', background: 'linear-gradient(135deg, #EEF2FF 0%, #F5F3FF 100%)',
-            border: '1px solid #C7D2FE',
+            padding: '1.25rem', background: 'linear-gradient(135deg, #FEF0E8 0%, #FDE8D8 100%)',
+            border: '1px solid #FDE8D8',
           }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#6366F1" strokeWidth="2">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#F26522" strokeWidth="2">
                 <circle cx="12" cy="12" r="10"/>
                 <line x1="12" y1="8" x2="12" y2="12"/>
                 <line x1="12" y1="16" x2="12.01" y2="16"/>
               </svg>
-              <span style={{ fontWeight: 700, fontSize: '0.875rem', color: '#4338CA' }}>AI Confidence</span>
+              <span style={{ fontWeight: 700, fontSize: '0.875rem', color: '#D4541A' }}>AI Confidence</span>
             </div>
-            <p style={{ fontSize: '0.78rem', color: '#4338CA', margin: 0, lineHeight: 1.5 }}>
+            <p style={{ fontSize: '0.78rem', color: '#D4541A', margin: 0, lineHeight: 1.5 }}>
               Our AI pipeline typically achieves <strong>90–97% confidence</strong> on well-structured RFP documents with clear scoring criteria.
             </p>
           </div>
