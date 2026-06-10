@@ -10,20 +10,18 @@ function stripExt(name) {
 }
 
 function deriveWeight(c) {
-  if (c.is_mandatory)    return 'Critical'
-  if (c.max_marks >= 10) return 'High'
-  return 'Medium'
+  if (c.is_mandatory) return 'Critical'
+  return 'Low'
 }
 
 /* ── Badges ─────────────────────────────────────────────────────────────── */
 function statusBadge(s) {
-  if (s === 'Met')     return <span className="badge badge-met"     style={{ fontSize: '0.7rem' }}>✓ Met</span>
-  if (s === 'Partial') return <span className="badge badge-partial" style={{ fontSize: '0.7rem' }}>◑ Partial</span>
-  return                      <span className="badge badge-notmet"  style={{ fontSize: '0.7rem' }}>✗ Not Met</span>
+  if (s === 'Met') return <span className="badge badge-met"    style={{ fontSize: '0.7rem' }}>✓ Met</span>
+  return                  <span className="badge badge-notmet" style={{ fontSize: '0.7rem' }}>✗ Not Met</span>
 }
 
 function weightBadge(w) {
-  const map = { Critical: 'badge-weight-critical', High: 'badge-weight-high', Medium: 'badge-weight-medium' }
+  const map = { Critical: 'badge-weight-critical', Low: 'badge-weight-medium' }
   return <span className={`badge ${map[w] || 'badge-weight-medium'}`} style={{ fontSize: '0.7rem' }}>{w}</span>
 }
 
@@ -86,7 +84,7 @@ function RequirementsTable({ criteria }) {
       <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid #E5E7EB', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={{ fontWeight: 700, fontSize: '1rem' }}>Requirements Assessment</div>
         <div style={{ display: 'flex', gap: 6 }}>
-          {['all', 'Met', 'Partial', 'Not Met'].map(f => (
+          {['all', 'Met', 'Not Met'].map(f => (
             <button key={f} onClick={() => setFilter(f)} style={{
               padding: '4px 12px', borderRadius: 999, fontSize: '0.75rem', fontWeight: 600,
               border: '1px solid', cursor: 'pointer',

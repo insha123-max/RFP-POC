@@ -164,7 +164,7 @@ export default function VendorAnalysisPage() {
 
   const allCriteria = report.category_results.flatMap(c => c.criteria)
   const metCount    = allCriteria.filter(c => c.compliance_status === 'Met').length
-  const partCount   = allCriteria.filter(c => c.compliance_status === 'Partial').length
+  const partCount   = 0 // Partial is remapped to Not Met at pipeline level
   const missCount   = allCriteria.filter(c => c.compliance_status === 'Not Met').length
   const score       = Math.round((report.total_score / report.max_score) * 100)
 
@@ -255,9 +255,8 @@ export default function VendorAnalysisPage() {
           <CoverageChart categories={report.category_results} />
           <div style={{ display: 'flex', justifyContent: 'space-around', marginTop: '1rem', padding: '1rem', background: '#F8FAFC', borderRadius: 8 }}>
             {[
-              { val: metCount,  label: 'Covered', color: '#22C55E' },
-              { val: partCount, label: 'Partial',  color: '#F59E0B' },
-              { val: missCount, label: 'Missing',  color: '#EF4444' },
+              { val: metCount,  label: 'Met',     color: '#22C55E' },
+              { val: missCount, label: 'Not Met', color: '#EF4444' },
             ].map(s => (
               <div key={s.label} style={{ textAlign: 'center' }}>
                 <div style={{ fontSize: '1.5rem', fontWeight: 900, color: s.color }}>{s.val}</div>
