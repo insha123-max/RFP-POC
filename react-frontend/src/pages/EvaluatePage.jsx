@@ -79,12 +79,14 @@ function UploadZone({ label, sub, file, onFile, accent }) {
       onDrop={e => { e.preventDefault(); setOver(false); set(e.dataTransfer.files[0]) }}
       style={{
         border: `2px dashed ${file ? '#22C55E' : over ? accent : '#CBD5E1'}`,
-        borderRadius: 12, padding: '2.5rem 2rem', textAlign: 'center',
+        borderRadius: 12, padding: '2rem 1.5rem', textAlign: 'center',
         cursor: 'pointer', background: file ? '#F0FDF4' : over ? '#FEF0E8' : '#FAFAFA',
-        transition: 'all .2s', flex: 1,
+        transition: 'all .2s', flex: '1 1 0', minWidth: 0,
+        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+        minHeight: 200,
       }}
     >
-      <input ref={ref} type="file" accept=".pdf,.doc,.docx" hidden
+      <input ref={ref} type="file" accept=".pdf,.doc,.docx,.pptx" hidden
         onChange={e => set(e.target.files[0])} />
       <div style={{
         width: 52, height: 52, borderRadius: 12, margin: '0 auto 1rem',
@@ -107,8 +109,113 @@ function UploadZone({ label, sub, file, onFile, accent }) {
               padding: '0.45rem 1.1rem', borderRadius: 8, fontSize: '0.82rem',
               fontWeight: 700, marginBottom: 8,
             }}>Choose File</div>
-            <div style={{ fontSize: '0.72rem', color: '#94A3B8' }}>PDF · DOC · DOCX</div>
+            <div style={{ fontSize: '0.72rem', color: '#94A3B8' }}>PDF · DOC · DOCX · PPTX</div>
           </>}
+    </div>
+  )
+}
+
+function MultiUploadZone({ label, sub, files, onFiles, accent }) {
+  const ref = useRef()
+  const [over, setOver] = useState(false)
+
+  const addFiles = newFiles => {
+    if (!newFiles || newFiles.length === 0) return
+    const existing = new Set(files.map(f => f.name))
+    const toAdd = Array.from(newFiles).filter(f => !existing.has(f.name))
+    if (toAdd.length > 0) onFiles([...files, ...toAdd])
+  }
+
+  const removeFile = name => onFiles(files.filter(f => f.name !== name))
+
+  return (
+    <div style={{ flex: '1 1 0', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+      <input ref={ref} type="file" accept=".pdf,.doc,.docx,.pptx" multiple hidden
+        onChange={e => { addFiles(e.target.files); e.target.value = '' }} />
+
+      {files.length > 0 ? (
+        <div style={{
+          border: '2px solid #22C55E', borderRadius: 12, padding: '1.25rem',
+          background: '#F0FDF4', transition: 'all .2s', flex: 1, display: 'flex', flexDirection: 'column',
+        }}>
+          <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#15803D', marginBottom: 10 }}>
+            {label} — {files.length} file{files.length > 1 ? 's' : ''} selected
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 10 }}>
+            {files.map(f => (
+              <div key={f.name} style={{
+                display: 'flex', alignItems: 'center', gap: 8,
+                background: '#DCFCE7', borderRadius: 8, padding: '0.45rem 0.75rem',
+                minWidth: 0,
+              }}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#16A34A" strokeWidth="2" style={{ flexShrink: 0 }}>
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                  <polyline points="14 2 14 8 20 8"/>
+                </svg>
+                <span style={{
+                  flex: 1, fontSize: '0.78rem', color: '#15803D', fontWeight: 600,
+                  whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                }}>✓ {f.name}</span>
+                <button
+                  onClick={e => { e.stopPropagation(); removeFile(f.name) }}
+                  style={{
+                    background: 'none', border: 'none', cursor: 'pointer',
+                    color: '#16A34A', fontSize: '1rem', lineHeight: 1,
+                    padding: '0 2px', flexShrink: 0, fontWeight: 700,
+                  }}
+                >×</button>
+              </div>
+            ))}
+          </div>
+          <div
+            onClick={() => ref.current.click()}
+            onDragOver={e => { e.preventDefault(); setOver(true) }}
+            onDragLeave={() => setOver(false)}
+            onDrop={e => { e.preventDefault(); setOver(false); addFiles(e.dataTransfer.files) }}
+            style={{
+              border: `1.5px dashed ${over ? accent : '#22C55E'}`,
+              borderRadius: 8, padding: '0.55rem 1rem', textAlign: 'center',
+              cursor: 'pointer', background: over ? '#FEF0E8' : 'transparent',
+              transition: 'all .2s',
+            }}
+          >
+            <span style={{ fontSize: '0.78rem', fontWeight: 700, color: accent }}>+ Add More Files</span>
+          </div>
+        </div>
+      ) : (
+        <div
+          onClick={() => ref.current.click()}
+          onDragOver={e => { e.preventDefault(); setOver(true) }}
+          onDragLeave={() => setOver(false)}
+          onDrop={e => { e.preventDefault(); setOver(false); addFiles(e.dataTransfer.files) }}
+          style={{
+            border: `2px dashed ${over ? accent : '#CBD5E1'}`,
+            borderRadius: 12, padding: '2rem 1.5rem', textAlign: 'center',
+            cursor: 'pointer', background: over ? '#FEF0E8' : '#FAFAFA',
+            transition: 'all .2s', flex: 1, minHeight: 200,
+            display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+          }}
+        >
+          <div style={{
+            width: 52, height: 52, borderRadius: 12, margin: '0 auto 1rem',
+            background: '#FEF0E8',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}>
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke={accent} strokeWidth="1.8">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+              <polyline points="14 2 14 8 20 8"/>
+            </svg>
+          </div>
+          <div style={{ fontSize: '0.9rem', fontWeight: 700, color: '#1E293B', marginBottom: 4 }}>{label}</div>
+          <div style={{ fontSize: '0.8rem', color: '#64748B', marginBottom: '1rem' }}>{sub}</div>
+          <div style={{
+            display: 'inline-block', background: accent, color: '#fff',
+            padding: '0.45rem 1.1rem', borderRadius: 8, fontSize: '0.82rem',
+            fontWeight: 700, marginBottom: 8,
+          }}>Choose Files</div>
+          <div style={{ fontSize: '0.72rem', color: '#94A3B8' }}>PDF · DOC · DOCX · PPTX · Multiple allowed</div>
+        </div>
+      )}
     </div>
   )
 }
@@ -230,7 +337,7 @@ function StepCard({ step, state }) {
 
 export default function EvaluatePage() {
   const [rfpFile, setRfpFile]     = useState(null)
-  const [bidFile, setBidFile]     = useState(null)
+  const [bidFiles, setBidFiles]   = useState([])
   const [phase, setPhase]         = useState('upload')   // upload | progress | error
   const [stepStates, setStepStates] = useState(STEPS.map(() => 'pending'))
   const [error, setError]         = useState('')
@@ -255,16 +362,17 @@ export default function EvaluatePage() {
     ]
 
     try {
-      const report = await runEvaluation(rfpFile, bidFile)
+      const report = await runEvaluation(rfpFile, bidFiles)
       timers.forEach(clearTimeout)
       setStepStates(STEPS.map(() => 'done'))
       setReport(report)
       setRfpName(rfpFile.name)
-      setBidName(bidFile.name)
+      const bidName = bidFiles.map(f => f.name).join(', ')
+      setBidName(bidName)
       addToHistory({
         id: Date.now(),
         rfpName: rfpFile.name,
-        bidName: bidFile.name,
+        bidName,
         report,
         timestamp: new Date().toISOString(),
         score: Math.round((report.total_score / report.max_score) * 100),
@@ -374,7 +482,7 @@ export default function EvaluatePage() {
             <div style={{ fontWeight: 700, fontSize: '1rem', marginBottom: '1.25rem', color: '#1E293B' }}>
               Upload Documents
             </div>
-            <div style={{ display: 'flex', gap: '1.5rem', marginBottom: '2rem', alignItems: 'stretch' }}>
+            <div style={{ display: 'flex', gap: '1.5rem', marginBottom: '2rem', alignItems: 'stretch', minHeight: 200 }}>
               <UploadZone
                 label="RFP / Tender Document"
                 sub="Contains evaluation criteria and scoring rules"
@@ -387,10 +495,10 @@ export default function EvaluatePage() {
                   justifyContent: 'center', fontSize: '0.78rem', fontWeight: 800, color: '#94A3B8',
                 }}>VS</div>
               </div>
-              <UploadZone
+              <MultiUploadZone
                 label="Vendor Bid Document"
                 sub="The vendor's response to be evaluated"
-                file={bidFile} onFile={setBidFile} accent="#F5823A"
+                files={bidFiles} onFiles={setBidFiles} accent="#F5823A"
               />
             </div>
 
@@ -398,7 +506,7 @@ export default function EvaluatePage() {
               <button
                 className="btn btn-primary"
                 style={{ padding: '0.75rem 2.5rem', fontSize: '1rem' }}
-                disabled={!rfpFile || !bidFile}
+                disabled={!rfpFile || bidFiles.length === 0}
                 onClick={handleEvaluate}
               >
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
@@ -418,39 +526,89 @@ export default function EvaluatePage() {
               Upload Status
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              {[
-                { label: 'RFP / Tender Document', file: rfpFile },
-                { label: 'Vendor Bid Document',   file: bidFile },
-              ].map(({ label, file }) => (
-                <div key={label} style={{
+              {/* RFP row */}
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 12,
+                padding: '0.7rem 1rem', borderRadius: 8,
+                background: rfpFile ? '#F0FDF4' : '#F8FAFC',
+                border: `1px solid ${rfpFile ? '#BBF7D0' : '#E2E8F0'}`,
+              }}>
+                <div style={{
+                  width: 28, height: 28, borderRadius: 6,
+                  background: rfpFile ? '#DCFCE7' : '#E2E8F0',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                }}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                    stroke={rfpFile ? '#16A34A' : '#94A3B8'} strokeWidth="2">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                    <polyline points="14 2 14 8 20 8"/>
+                  </svg>
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: '0.8rem', fontWeight: 600, color: '#1E293B' }}>RFP / Tender Document</div>
+                  <div style={{ fontSize: '0.72rem', color: rfpFile ? '#16A34A' : '#94A3B8',
+                    whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {rfpFile ? rfpFile.name : 'No file selected'}
+                  </div>
+                </div>
+                <span style={{
+                  fontSize: '0.68rem', fontWeight: 700, padding: '2px 8px', borderRadius: 999,
+                  background: rfpFile ? '#DCFCE7' : '#F1F5F9',
+                  color: rfpFile ? '#15803D' : '#64748B',
+                }}>{rfpFile ? 'Ready' : 'Pending'}</span>
+              </div>
+
+              {/* Bid files rows */}
+              {bidFiles.length === 0 ? (
+                <div style={{
                   display: 'flex', alignItems: 'center', gap: 12,
                   padding: '0.7rem 1rem', borderRadius: 8,
-                  background: file ? '#F0FDF4' : '#F8FAFC',
-                  border: `1px solid ${file ? '#BBF7D0' : '#E2E8F0'}`,
+                  background: '#F8FAFC', border: '1px solid #E2E8F0',
                 }}>
                   <div style={{
-                    width: 28, height: 28, borderRadius: 6,
-                    background: file ? '#DCFCE7' : '#E2E8F0',
+                    width: 28, height: 28, borderRadius: 6, background: '#E2E8F0',
                     display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
                   }}>
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
-                      stroke={file ? '#16A34A' : '#94A3B8'} strokeWidth="2">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" strokeWidth="2">
                       <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
                       <polyline points="14 2 14 8 20 8"/>
                     </svg>
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: '0.8rem', fontWeight: 600, color: '#1E293B' }}>{label}</div>
-                    <div style={{ fontSize: '0.72rem', color: file ? '#16A34A' : '#94A3B8',
+                    <div style={{ fontSize: '0.8rem', fontWeight: 600, color: '#1E293B' }}>Vendor Bid Documents</div>
+                    <div style={{ fontSize: '0.72rem', color: '#94A3B8' }}>No files selected</div>
+                  </div>
+                  <span style={{
+                    fontSize: '0.68rem', fontWeight: 700, padding: '2px 8px', borderRadius: 999,
+                    background: '#F1F5F9', color: '#64748B',
+                  }}>Pending</span>
+                </div>
+              ) : bidFiles.map((f, i) => (
+                <div key={f.name} style={{
+                  display: 'flex', alignItems: 'center', gap: 12,
+                  padding: '0.7rem 1rem', borderRadius: 8,
+                  background: '#F0FDF4', border: '1px solid #BBF7D0',
+                }}>
+                  <div style={{
+                    width: 28, height: 28, borderRadius: 6, background: '#DCFCE7',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                  }}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#16A34A" strokeWidth="2">
+                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                      <polyline points="14 2 14 8 20 8"/>
+                    </svg>
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: '0.8rem', fontWeight: 600, color: '#1E293B' }}>Vendor Bid {bidFiles.length > 1 ? `#${i + 1}` : 'Document'}</div>
+                    <div style={{ fontSize: '0.72rem', color: '#16A34A',
                       whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                      {file ? file.name : 'No file selected'}
+                      {f.name}
                     </div>
                   </div>
                   <span style={{
                     fontSize: '0.68rem', fontWeight: 700, padding: '2px 8px', borderRadius: 999,
-                    background: file ? '#DCFCE7' : '#F1F5F9',
-                    color: file ? '#15803D' : '#64748B',
-                  }}>{file ? 'Ready' : 'Pending'}</span>
+                    background: '#DCFCE7', color: '#15803D',
+                  }}>Ready</span>
                 </div>
               ))}
             </div>

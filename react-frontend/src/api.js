@@ -1,9 +1,10 @@
 const BASE = '/api'
 
-export async function runEvaluation(rfpFile, bidFile) {
+export async function runEvaluation(rfpFile, bidFiles) {
   const form = new FormData()
   form.append('rfp_file', rfpFile)
-  form.append('bid_file', bidFile)
+  const files = Array.isArray(bidFiles) ? bidFiles : [bidFiles]
+  files.forEach(f => form.append('bid_files', f))
   const res = await fetch(`${BASE}/evaluate`, { method: 'POST', body: form })
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }))

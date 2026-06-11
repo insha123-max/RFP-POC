@@ -1,6 +1,7 @@
 """FastAPI application for the RFP Evaluator."""
 
 import os
+from typing import List
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, UploadFile
@@ -33,20 +34,25 @@ app.add_middleware(
 @app.post("/api/evaluate", response_model=EvaluationReport)
 async def evaluate(
     rfp_file: UploadFile = File(..., description="RFP / Tender document"),
-    bid_file: UploadFile = File(..., description="Vendor bid / response document"),
+    bid_files: List[UploadFile] = File(..., description="Vendor bid / response documents"),
 ):
     rfp_bytes = await rfp_file.read()
     rfp_text, rfp_err = extract_text(rfp_file.filename or "rfp.pdf", rfp_bytes)
     if rfp_err:
         raise HTTPException(status_code=400, detail=f"RFP document error: {rfp_err}")
 
-    bid_bytes = await bid_file.read()
-    bid_text, bid_err = extract_text(bid_file.filename or "bid.pdf", bid_bytes)
-    if bid_err:
-        raise HTTPException(status_code=400, detail=f"Bid document error: {bid_err}")
+    bid_parts = []
+    for i, bid_file in enumerate(bid_files):
+        bid_bytes = await bid_file.read()
+        bid_text, bid_err = extract_text(bid_file.filename or f"bid_{i+1}.pdf", bid_bytes)
+        if bid_err:
+            raise HTTPException(status_code=400, detail=f"Bid document '{bid_file.filename}' error: {bid_err}")
+        header = f"=== BID DOCUMENT {i+1}: {bid_file.filename} ===" if len(bid_files) > 1 else ""
+        bid_parts.append(f"{header}\n{bid_text}".strip())
+    combined_bid_text = "\n\n".join(bid_parts)
 
     try:
-        report = await run_full_evaluation(rfp_text, bid_text)
+        report = await run_full_evaluation(rfp_text, combined_bid_text)
         return report
     except ValueError as exc:
         if str(exc) == "NO_RULES_FOUND":

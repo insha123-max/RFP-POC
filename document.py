@@ -3,6 +3,7 @@ from typing import Tuple
 
 import pdfplumber
 from docx import Document
+from pptx import Presentation
 
 
 def extract_text_from_pdf(file_bytes: bytes) -> str:
@@ -32,6 +33,27 @@ def extract_text_from_docx(file_bytes: bytes) -> str:
     return "\n".join(parts)
 
 
+def extract_text_from_pptx(file_bytes: bytes) -> str:
+    prs = Presentation(io.BytesIO(file_bytes))
+    slides = []
+    for i, slide in enumerate(prs.slides):
+        texts = []
+        for shape in slide.shapes:
+            if shape.has_text_frame:
+                for para in shape.text_frame.paragraphs:
+                    text = para.text.strip()
+                    if text:
+                        texts.append(text)
+            if shape.has_table:
+                for row in shape.table.rows:
+                    cells = [cell.text.strip() for cell in row.cells if cell.text.strip()]
+                    if cells:
+                        texts.append(" | ".join(cells))
+        if texts:
+            slides.append(f"[Slide {i + 1}]\n" + "\n".join(texts))
+    return "\n\n".join(slides)
+
+
 def extract_text(filename: str, file_bytes: bytes) -> Tuple[str, str]:
     """Return (text, error_message). If error_message is non-empty, text is empty."""
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
@@ -58,7 +80,16 @@ def extract_text(filename: str, file_bytes: bytes) -> Tuple[str, str]:
         except Exception as exc:
             return "", f"Failed to read Word document: {exc}"
 
+    if ext == "pptx":
+        try:
+            text = extract_text_from_pptx(file_bytes)
+            if not text.strip():
+                return "", "The PowerPoint file appears to contain no readable text."
+            return text, ""
+        except Exception as exc:
+            return "", f"Failed to read PowerPoint file: {exc}"
+
     return (
         "",
-        f"Unsupported file format '.{ext}'. Please upload a PDF, DOC, or DOCX file.",
+        f"Unsupported file format '.{ext}'. Please upload a PDF, DOC, DOCX, or PPTX file.",
     )
