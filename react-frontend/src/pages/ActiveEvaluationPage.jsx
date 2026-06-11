@@ -342,6 +342,18 @@ export default function ActiveEvaluationPage() {
           </h1>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
             <span className="badge badge-inprog">Evaluation Complete</span>
+            {report.prebid_applied && (
+              <span style={{
+                display: 'inline-flex', alignItems: 'center', gap: 4,
+                background: '#EDE9FE', color: '#5B21B6', fontSize: '0.68rem', fontWeight: 700,
+                padding: '2px 10px', borderRadius: 999, border: '1px solid #DDD6FE',
+              }}>
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#5B21B6" strokeWidth="2.5">
+                  <polyline points="20 6 9 17 4 12"/>
+                </svg>
+                Pre-Bid Q&amp;A Applied
+              </span>
+            )}
             <span style={{ fontSize: '0.78rem', color: '#9CA3AF' }}>just now</span>
           </div>
         </div>
@@ -575,6 +587,37 @@ export default function ActiveEvaluationPage() {
 
       {/* Requirements Assessment */}
       <RequirementsTable criteria={criteria} />
+
+      {/* Pre-Bid Q&A Clarifications */}
+      {report.prebid_qa?.length > 0 && (
+        <div className="card" style={{ padding: 0, overflow: 'hidden', marginBottom: '1.5rem' }}>
+          <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid #E5E7EB', display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{ fontWeight: 700, fontSize: '1rem' }}>Pre-Bid Q&amp;A Clarifications</div>
+            <span style={{
+              background: '#EDE9FE', color: '#5B21B6', fontSize: '0.68rem', fontWeight: 700,
+              padding: '1px 9px', borderRadius: 999, border: '1px solid #DDD6FE',
+            }}>{report.prebid_qa.length} Q&amp;As</span>
+          </div>
+          <div style={{ padding: '1rem 1.5rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+            {report.prebid_qa.map((item, i) => (
+              <div key={i} style={{ borderRadius: 8, border: '1px solid #E5E7EB', overflow: 'hidden' }}>
+                <div style={{
+                  background: '#F8FAFC', padding: '0.65rem 1rem',
+                  fontSize: '0.82rem', fontWeight: 600, color: '#1E293B',
+                  borderBottom: '1px solid #E5E7EB', display: 'flex', gap: 8, alignItems: 'flex-start',
+                }}>
+                  <span style={{ color: '#7C3AED', fontWeight: 800, flexShrink: 0 }}>Q{i + 1}</span>
+                  {item.question}
+                </div>
+                <div style={{ padding: '0.65rem 1rem', fontSize: '0.82rem', color: '#374151', background: '#fff', lineHeight: 1.6, display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                  <span style={{ color: '#16A34A', fontWeight: 800, flexShrink: 0 }}>A</span>
+                  {item.answer}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Risk & Gap Analysis */}
       <div className="card" style={{ padding: '1.5rem' }}>

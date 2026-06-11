@@ -69,6 +69,11 @@ class RiskItem(BaseModel):
     description: str
 
 
+class PrebidQA(BaseModel):
+    question: str
+    answer: str
+
+
 class EvaluationReport(BaseModel):
     total_score: float
     max_score: float
@@ -81,6 +86,8 @@ class EvaluationReport(BaseModel):
     risk_items: List[RiskItem] = []
     executive_summary: str
     rules: EvaluationRules
+    prebid_qa: List[PrebidQA] = []
+    prebid_applied: bool = False
 
 
 class OverrideEntry(BaseModel):

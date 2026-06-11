@@ -2,7 +2,7 @@
 
 import json
 import os
-from typing import List
+from typing import List, Optional
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
@@ -44,6 +44,7 @@ app.add_middleware(
 async def evaluate(
     rfp_file: UploadFile = File(..., description="RFP / Tender document"),
     bid_files: List[UploadFile] = File(..., description="Vendor bid / response documents"),
+    prebid_file: Optional[UploadFile] = File(None, description="Pre-Bid Q&A / clarification document (optional)"),
 ):
     rfp_bytes = await rfp_file.read()
     rfp_text, rfp_err = extract_text(rfp_file.filename or "rfp.pdf", rfp_bytes)
@@ -60,8 +61,16 @@ async def evaluate(
         bid_parts.append(f"{header}\n{bid_text}".strip())
     combined_bid_text = "\n\n".join(bid_parts)
 
+    prebid_text = ""
+    if prebid_file is not None:
+        prebid_bytes = await prebid_file.read()
+        pb_text, pb_err = extract_text(prebid_file.filename or "prebid.pdf", prebid_bytes)
+        if pb_err:
+            raise HTTPException(status_code=400, detail=f"Additional document error: {pb_err}")
+        prebid_text = pb_text
+
     try:
-        report = await run_full_evaluation(rfp_text, combined_bid_text)
+        report = await run_full_evaluation(rfp_text, combined_bid_text, prebid_text=prebid_text)
         return report
     except ValueError as exc:
         if str(exc) == "NO_RULES_FOUND":

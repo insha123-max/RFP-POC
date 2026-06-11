@@ -17,6 +17,7 @@ from models import (
     DisqualifierCheck,
     EvaluationReport,
     EvaluationRules,
+    PrebidQA,
     RiskItem,
     ScoringCategory,
     SubCriterion,
@@ -33,10 +34,10 @@ load_dotenv()
 #   llama-3.1-70b-versatile    100K TPD,  6K TPM   — additional 70B pool
 #   llama-3.2-3b-preview      14.4K TPD, 15K TPM   — small fast model
 _MODELS = [
-    "llama-3.1-8b-instant",
-    "llama-3.3-70b-versatile",
-    "gemma2-9b-it",
-    "llama-3.1-70b-versatile",
+    "llama-3.3-70b-versatile",   # best reasoning — use first
+    "llama-3.1-70b-versatile",   # second 70B pool
+    "gemma2-9b-it",              # fallback
+    "llama-3.1-8b-instant",      # last resort — weak at math
     "llama-3.2-3b-preview",
 ]
 MODEL_NAME = _MODELS[0]
@@ -342,7 +343,9 @@ def _rfp_extract_prompt(chunk: str) -> str:
         f"RULE 1: Do NOT group categories under a single parent. Each scoring category is independent.\n"
         f"RULE 2: subcriteria must be a FLAT list — no nesting.\n"
         f"RULE 3: Preserve exact criterion names and prefixes as they appear in the document.\n"
-        f"RULE 4: Set mandatory=true only for criteria the document explicitly labels as mandatory/compulsory/must-meet.\n\n"
+        f"RULE 4: Set mandatory=true only for criteria the document explicitly labels as mandatory/compulsory/must-meet.\n"
+        f"RULE 5: If a 'PRE-BID CLARIFICATIONS' section is present, treat it as authoritative — any criterion, "
+        f"threshold, or requirement stated there overrides the corresponding original RFP value.\n\n"
         f"Return ONLY JSON:\n"
         f'{{"rules_found":true,"scoring_categories":[{{"category":"Category Name","max_marks":70,"weight_percent":70,'
         f'"subcriteria":[{{"criterion":"Sub-Criterion Name","max_marks":20,"mandatory":false}}]}}],'
@@ -590,6 +593,22 @@ async def stage3_parse_vendor_response(
             "ALWAYS set marks_awarded to the specific tiered value that matches the vendor's evidence."
         )
 
+        # Append to every branch — LLMs (especially smaller ones) routinely invert
+        # numeric comparisons. These explicit rules prevent the most common mistakes.
+        scoring_instruction += (
+            "\n\nNUMERIC COMPARISON RULES (apply these carefully before deciding Met/Not Met):\n"
+            "1. MINIMUM requirements (e.g. 'at least X years', 'minimum X', 'not less than X'):\n"
+            "   Met = vendor's value >= X.  Example: minimum 5 years, vendor has 8 years → MET.\n"
+            "2. MAXIMUM / ceiling requirements (e.g. 'must not exceed X', 'maximum X', 'up to X'):\n"
+            "   Met = vendor's value <= X.  Example: must not exceed INR 25,00,000, vendor quotes INR 21,50,000 → MET.\n"
+            "3. Indian currency (INR lakhs/crores): read commas as Indian grouping.\n"
+            "   1,00,000 = 1 lakh = 100 000.  21,50,000 = 21.5 lakhs = 2 150 000.\n"
+            "   25,00,000 = 25 lakhs = 2 500 000.  So 21,50,000 < 25,00,000.\n"
+            "4. Never swap the vendor value and the threshold when writing the justification.\n"
+            "   Correct: 'Vendor has 8 years which meets the 5-year minimum.'\n"
+            "   Wrong:   'Vendor has 8 years but minimum is 5 years — risk.'"
+        )
+
         rfp_context = (
             f"\nRFP SCORING TIERS FOR REFERENCE (use these to determine the correct tier and marks):\n{rfp_scoring_text[:4000]}\n"
             if rfp_scoring_text and not is_future_event else ""
@@ -805,6 +824,28 @@ Return ONLY the summary text — no JSON, no headers."""
 
 
 # ---------------------------------------------------------------------------
+# Stage 7 — Pre-Bid Q&A Extraction
+# ---------------------------------------------------------------------------
+
+async def stage_extract_prebid_qa(prebid_text: str) -> list:
+    """Extract structured Q&A pairs from a pre-bid clarification document."""
+    prompt = (
+        "You are reading a Pre-Bid Q&A / Clarification document from a government procurement process.\n\n"
+        f"{prebid_text[:8000]}\n\n"
+        "Extract ALL question-and-answer pairs from this document.\n"
+        "Each entry should capture the vendor's question and the procuring authority's official answer.\n\n"
+        "Return ONLY a JSON array (no prose, no markdown):\n"
+        '[{"question": "<the vendor question>", "answer": "<the official answer>"}]\n\n'
+        "If no clear Q&A pairs are found, return an empty array: []"
+    )
+    try:
+        items = _parse_array(await _call(prompt))
+        return [PrebidQA(**item) for item in items if isinstance(item, dict) and "question" in item and "answer" in item]
+    except Exception:
+        return []
+
+
+# ---------------------------------------------------------------------------
 # Orchestrator — shared stages 3-6
 # ---------------------------------------------------------------------------
 
@@ -812,6 +853,7 @@ async def _run_pipeline(
     bid_text: str,
     rules: EvaluationRules,
     rfp_scoring_text: str = "",
+    prebid_text: str = "",
 ) -> EvaluationReport:
     criteria_evals      = await stage3_parse_vendor_response(bid_text, rules, rfp_scoring_text)
     category_results    = stage4_calculate_scores(criteria_evals, rules)
@@ -836,6 +878,8 @@ async def _run_pipeline(
     executive_summary = await stage6_executive_summary(
         total_score, max_score, passed, category_results
     )
+    prebid_qa      = await stage_extract_prebid_qa(prebid_text) if prebid_text.strip() else []
+    prebid_applied = bool(prebid_text.strip())
 
     return EvaluationReport(
         total_score=total_score,
@@ -849,15 +893,24 @@ async def _run_pipeline(
         risk_items=risk_items,
         executive_summary=executive_summary,
         rules=rules,
+        prebid_qa=prebid_qa,
+        prebid_applied=prebid_applied,
     )
 
 
-async def run_full_evaluation(rfp_text: str, bid_text: str) -> EvaluationReport:
+async def run_full_evaluation(rfp_text: str, bid_text: str, prebid_text: str = "") -> EvaluationReport:
+    prebid_applied = bool(prebid_text.strip())
+    if prebid_applied:
+        rfp_text = (
+            rfp_text
+            + "\n\n=== PRE-BID CLARIFICATIONS (take precedence over original criteria above) ===\n\n"
+            + prebid_text.strip()
+        )
     rules = await stage2_extract_rules(rfp_text)
     if not rules.rules_found:
         raise ValueError("NO_RULES_FOUND")
     rfp_scoring_text = _extract_scoring_sections(rfp_text, MAX_RFP_CHARS)
-    return await _run_pipeline(bid_text, rules, rfp_scoring_text)
+    return await _run_pipeline(bid_text, rules, rfp_scoring_text, prebid_text=prebid_text)
 
 
 async def run_evaluation_with_rules(bid_text: str, rules: EvaluationRules) -> EvaluationReport:
