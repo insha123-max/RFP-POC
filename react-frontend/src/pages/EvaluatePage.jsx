@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { runEvaluation } from '../api'
+import { runEvaluation, runCustomEvaluation } from '../api'
 import { useEvaluation } from '../context/EvaluationContext'
 
 const STEPS = [
@@ -220,6 +220,194 @@ function MultiUploadZone({ label, sub, files, onFiles, accent }) {
   )
 }
 
+/* ── Custom Criteria Form ────────────────────────────────────────────────── */
+const newCriterion = () => ({ id: Date.now() + Math.random(), question: '', maxMarks: 10, mandatory: false })
+const newCategory  = () => ({ id: Date.now() + Math.random(), name: '', minimumRequired: 70, criteria: [newCriterion()] })
+
+function CustomCriteriaForm({ value, onChange }) {
+  const { threshold, categories } = value
+
+  const set = next => onChange(next)
+
+  const addCategory = () => set({ ...value, categories: [...categories, newCategory()] })
+
+  const removeCategory = id =>
+    set({ ...value, categories: categories.filter(c => c.id !== id) })
+
+  const updateCat = (id, patch) =>
+    set({ ...value, categories: categories.map(c => c.id === id ? { ...c, ...patch } : c) })
+
+  const addCriterion = catId => {
+    const cat = categories.find(c => c.id === catId)
+    updateCat(catId, { criteria: [...cat.criteria, newCriterion()] })
+  }
+
+  const removeCriterion = (catId, critId) => {
+    const cat = categories.find(c => c.id === catId)
+    if (cat.criteria.length === 1) return
+    updateCat(catId, { criteria: cat.criteria.filter(c => c.id !== critId) })
+  }
+
+  const updateCrit = (catId, critId, patch) => {
+    const cat = categories.find(c => c.id === catId)
+    updateCat(catId, { criteria: cat.criteria.map(c => c.id === critId ? { ...c, ...patch } : c) })
+  }
+
+  const totalMarks = categories.reduce(
+    (sum, cat) => sum + cat.criteria.reduce((s, c) => s + (Number(c.maxMarks) || 0), 0), 0
+  )
+
+  const inputStyle = {
+    padding: '0.4rem 0.625rem', border: '1px solid #E2E8F0', borderRadius: 6,
+    fontSize: '0.82rem', color: '#1E293B', outline: 'none', background: '#fff',
+  }
+
+  return (
+    <div>
+      {/* Threshold bar */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
+        padding: '0.75rem 1rem', background: '#F8FAFC', borderRadius: 8,
+        border: '1px solid #E2E8F0', marginBottom: '1.25rem',
+      }}>
+        <div style={{ flex: 1, minWidth: 160 }}>
+          <div style={{ fontWeight: 600, fontSize: '0.82rem', color: '#1E293B' }}>Pass Threshold</div>
+          <div style={{ fontSize: '0.72rem', color: '#64748B' }}>Minimum score to pass</div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <input type="number" min="1" max="100" value={threshold}
+            onChange={e => set({ ...value, threshold: Number(e.target.value) })}
+            style={{ ...inputStyle, width: 58, textAlign: 'center', fontWeight: 700 }}
+          />
+          <span style={{ fontSize: '0.82rem', color: '#64748B' }}>%</span>
+        </div>
+        <div style={{ fontSize: '0.72rem', color: '#94A3B8', marginLeft: 8 }}>
+          Total marks: <strong style={{ color: '#4F46E5' }}>{totalMarks}</strong>
+        </div>
+      </div>
+
+      {/* Categories */}
+      {categories.map((cat, catIdx) => {
+        const catMarks  = cat.criteria.reduce((s, c) => s + (Number(c.maxMarks) || 0), 0)
+        const catWeight = totalMarks > 0 ? Math.round(catMarks / totalMarks * 100) : 0
+
+        return (
+          <div key={cat.id} style={{
+            border: '1px solid #E2E8F0', borderRadius: 10,
+            marginBottom: '0.875rem', overflow: 'hidden',
+          }}>
+            {/* Category header */}
+            <div style={{
+              background: '#F8FAFC', padding: '0.625rem 1rem',
+              borderBottom: '1px solid #E2E8F0',
+              display: 'flex', alignItems: 'center', gap: 8,
+            }}>
+              <div style={{
+                width: 22, height: 22, borderRadius: 6, background: '#4F46E5', color: '#fff',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: '0.65rem', fontWeight: 800, flexShrink: 0,
+              }}>{catIdx + 1}</div>
+
+              <input
+                placeholder="Category name (e.g. Technical Experience)"
+                value={cat.name}
+                onChange={e => updateCat(cat.id, { name: e.target.value })}
+                style={{
+                  flex: 1, border: 'none', background: 'transparent', outline: 'none',
+                  fontSize: '0.82rem', fontWeight: 600, color: '#1E293B',
+                }}
+              />
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+                <span style={{ fontSize: '0.7rem', color: '#94A3B8' }}>Min</span>
+                <input type="number" min="0" max="100" value={cat.minimumRequired}
+                  onChange={e => updateCat(cat.id, { minimumRequired: Number(e.target.value) })}
+                  style={{ ...inputStyle, width: 42, textAlign: 'center', padding: '2px 4px' }}
+                />
+                <span style={{ fontSize: '0.7rem', color: '#94A3B8' }}>%</span>
+                <span style={{ fontSize: '0.68rem', color: '#4F46E5', fontWeight: 700, marginLeft: 6 }}>
+                  {catMarks}pts · {catWeight}%
+                </span>
+              </div>
+
+              {categories.length > 1 && (
+                <button onClick={() => removeCategory(cat.id)} style={{
+                  background: 'none', border: 'none', cursor: 'pointer',
+                  color: '#CBD5E1', fontSize: '1.1rem', lineHeight: 1, padding: '2px 4px', flexShrink: 0,
+                }}
+                  onMouseEnter={e => e.target.style.color = '#EF4444'}
+                  onMouseLeave={e => e.target.style.color = '#CBD5E1'}
+                >×</button>
+              )}
+            </div>
+
+            {/* Criteria rows */}
+            <div style={{ padding: '0.75rem 1rem' }}>
+              {cat.criteria.map((crit, critIdx) => (
+                <div key={crit.id} style={{
+                  display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6,
+                }}>
+                  <span style={{ fontSize: '0.68rem', color: '#CBD5E1', width: 14, textAlign: 'right', flexShrink: 0 }}>
+                    {critIdx + 1}.
+                  </span>
+                  <input
+                    placeholder={`Question or criterion ${critIdx + 1}…`}
+                    value={crit.question}
+                    onChange={e => updateCrit(cat.id, crit.id, { question: e.target.value })}
+                    style={{ ...inputStyle, flex: 1 }}
+                    onFocus={e => e.target.style.borderColor = '#818CF8'}
+                    onBlur={e => e.target.style.borderColor = '#E2E8F0'}
+                  />
+                  <input type="number" min="1" max="999" value={crit.maxMarks}
+                    onChange={e => updateCrit(cat.id, crit.id, { maxMarks: Number(e.target.value) })}
+                    style={{ ...inputStyle, width: 50, textAlign: 'center' }}
+                    title="Max marks"
+                  />
+                  <span style={{ fontSize: '0.68rem', color: '#94A3B8', flexShrink: 0 }}>pts</span>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 3, cursor: 'pointer', flexShrink: 0 }}>
+                    <input type="checkbox" checked={crit.mandatory}
+                      onChange={e => updateCrit(cat.id, crit.id, { mandatory: e.target.checked })}
+                      style={{ cursor: 'pointer', accentColor: '#DC2626' }}
+                    />
+                    <span style={{ fontSize: '0.68rem', color: '#64748B' }}>Must</span>
+                  </label>
+                  {cat.criteria.length > 1 && (
+                    <button onClick={() => removeCriterion(cat.id, crit.id)} style={{
+                      background: 'none', border: 'none', cursor: 'pointer',
+                      color: '#CBD5E1', fontSize: '1rem', lineHeight: 1, padding: '2px', flexShrink: 0,
+                    }}
+                      onMouseEnter={e => e.target.style.color = '#EF4444'}
+                      onMouseLeave={e => e.target.style.color = '#CBD5E1'}
+                    >×</button>
+                  )}
+                </div>
+              ))}
+
+              <button onClick={() => addCriterion(cat.id)} style={{
+                marginTop: 4, background: 'none', border: '1px dashed #CBD5E1',
+                borderRadius: 6, padding: '0.3rem 0.75rem', cursor: 'pointer',
+                color: '#94A3B8', fontSize: '0.75rem', fontWeight: 600, transition: 'all .15s',
+              }}
+                onMouseEnter={e => { e.currentTarget.style.borderColor = '#818CF8'; e.currentTarget.style.color = '#4F46E5' }}
+                onMouseLeave={e => { e.currentTarget.style.borderColor = '#CBD5E1'; e.currentTarget.style.color = '#94A3B8' }}
+              >+ Add Question</button>
+            </div>
+          </div>
+        )
+      })}
+
+      <button onClick={addCategory} style={{
+        width: '100%', padding: '0.6rem', border: '1.5px dashed #CBD5E1',
+        borderRadius: 8, background: 'none', cursor: 'pointer',
+        color: '#64748B', fontSize: '0.8rem', fontWeight: 600, transition: 'all .15s',
+      }}
+        onMouseEnter={e => { e.currentTarget.style.borderColor = '#818CF8'; e.currentTarget.style.color = '#4F46E5'; e.currentTarget.style.background = '#EEF2FF' }}
+        onMouseLeave={e => { e.currentTarget.style.borderColor = '#CBD5E1'; e.currentTarget.style.color = '#64748B'; e.currentTarget.style.background = 'none' }}
+      >+ Add Category</button>
+    </div>
+  )
+}
+
 function StepCard({ step, state }) {
   const isPending = state === 'pending'
   const isActive  = state === 'active'
@@ -335,10 +523,38 @@ function StepCard({ step, state }) {
   )
 }
 
+const DEFAULT_CUSTOM_CRITERIA = {
+  threshold: 70,
+  categories: [newCategory()],
+}
+
+function buildCriteriaPayload(customCriteria) {
+  const totalMarks = customCriteria.categories.reduce(
+    (sum, cat) => sum + cat.criteria.reduce((s, c) => s + (Number(c.maxMarks) || 0), 0), 0
+  )
+  return {
+    threshold: customCriteria.threshold,
+    categories: customCriteria.categories.map(cat => {
+      const catMarks = cat.criteria.reduce((s, c) => s + (Number(c.maxMarks) || 0), 0)
+      return {
+        name: cat.name,
+        weight: totalMarks > 0 ? Math.round(catMarks / totalMarks * 100) : Math.round(100 / customCriteria.categories.length),
+        minimum_required: cat.minimumRequired,
+        criteria: cat.criteria.map(c => ({
+          question: c.question,
+          max_marks: Number(c.maxMarks),
+          mandatory: c.mandatory,
+        })),
+      }
+    }),
+  }
+}
+
 export default function EvaluatePage() {
   const [rfpFile, setRfpFile]     = useState(null)
   const [bidFiles, setBidFiles]   = useState([])
-  const [phase, setPhase]         = useState('upload')   // upload | progress | error
+  const [customCriteria, setCustomCriteria] = useState(DEFAULT_CUSTOM_CRITERIA)
+  const [phase, setPhase]         = useState('upload')   // upload | progress | no_rules | error
   const [stepStates, setStepStates] = useState(STEPS.map(() => 'pending'))
   const [error, setError]         = useState('')
   const { setReport, setRfpName, setBidName, addToHistory } = useEvaluation()
@@ -347,12 +563,16 @@ export default function EvaluatePage() {
   const advance = (idx, state) =>
     setStepStates(s => s.map((v, i) => (i === idx ? state : v)))
 
-  async function handleEvaluate() {
-    setPhase('progress')
-    setStepStates(STEPS.map(() => 'pending'))
-    setError('')
+  const isCriteriaReady =
+    customCriteria.categories.length > 0 &&
+    customCriteria.categories.every(cat =>
+      cat.name.trim() !== '' &&
+      cat.criteria.length > 0 &&
+      cat.criteria.every(c => c.question.trim() !== '' && Number(c.maxMarks) > 0)
+    )
 
-    const timers = [
+  function makeTimers() {
+    return [
       setTimeout(() => advance(0, 'active'), 100),
       setTimeout(() => { advance(0, 'done'); advance(1, 'active') }, 1200),
       setTimeout(() => { advance(1, 'done'); advance(2, 'active') }, 6000),
@@ -360,29 +580,59 @@ export default function EvaluatePage() {
       setTimeout(() => { advance(3, 'done'); advance(4, 'active') }, 28000),
       setTimeout(() => { advance(4, 'done'); advance(5, 'active') }, 38000),
     ]
+  }
 
+  async function finishEvaluation(report, rfpName) {
+    setStepStates(STEPS.map(() => 'done'))
+    setReport(report)
+    setRfpName(rfpName)
+    const bidName = bidFiles.map(f => f.name).join(', ')
+    setBidName(bidName)
+    addToHistory({
+      id: Date.now(),
+      rfpName,
+      bidName,
+      report,
+      timestamp: new Date().toISOString(),
+      score: Math.round((report.total_score / report.max_score) * 100),
+      passed: report.passed,
+    })
+    setTimeout(() => navigate('/active-evaluation'), 500)
+  }
+
+  async function handleEvaluate() {
+    setPhase('progress')
+    setStepStates(STEPS.map(() => 'pending'))
+    setError('')
+    const timers = makeTimers()
     try {
       const report = await runEvaluation(rfpFile, bidFiles)
       timers.forEach(clearTimeout)
-      setStepStates(STEPS.map(() => 'done'))
-      setReport(report)
-      setRfpName(rfpFile.name)
-      const bidName = bidFiles.map(f => f.name).join(', ')
-      setBidName(bidName)
-      addToHistory({
-        id: Date.now(),
-        rfpName: rfpFile.name,
-        bidName,
-        report,
-        timestamp: new Date().toISOString(),
-        score: Math.round((report.total_score / report.max_score) * 100),
-        passed: report.passed,
-      })
-      setTimeout(() => navigate('/active-evaluation'), 500)
+      await finishEvaluation(report, rfpFile.name)
+    } catch (e) {
+      timers.forEach(clearTimeout)
+      if (e.message.includes('NO_RULES_FOUND')) {
+        setPhase('no_rules')
+      } else {
+        setError(e.message)
+        setPhase('error')
+      }
+    }
+  }
+
+  async function handleEvaluateCustom() {
+    setPhase('progress')
+    setStepStates(STEPS.map(() => 'pending'))
+    setError('')
+    const timers = makeTimers()
+    try {
+      const report = await runCustomEvaluation(bidFiles, buildCriteriaPayload(customCriteria))
+      timers.forEach(clearTimeout)
+      await finishEvaluation(report, rfpFile?.name ?? 'Custom Criteria')
     } catch (e) {
       timers.forEach(clearTimeout)
       setError(e.message)
-      setPhase('error')
+      setPhase('no_rules')
     }
   }
 
@@ -458,6 +708,93 @@ export default function EvaluatePage() {
     )
   }
 
+  if (phase === 'no_rules') {
+    return (
+      <div className="page-content fade-in">
+        <div style={{ marginBottom: '1.5rem' }}>
+          <h1 style={{ fontSize: '1.5rem', fontWeight: 800, marginBottom: 4 }}>Define Scoring Criteria</h1>
+          <p style={{ color: '#64748B', margin: 0 }}>
+            The RFP was uploaded successfully but contains no scoring rules.
+            Define your own criteria below — the AI will evaluate the bid against them.
+          </p>
+        </div>
+
+        {/* Uploaded files summary */}
+        <div className="card" style={{ padding: '1rem 1.25rem', marginBottom: '1.5rem', display: 'flex', gap: '1.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+          {rfpFile && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div style={{ width: 28, height: 28, borderRadius: 6, background: '#FEF0E8', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#F26522" strokeWidth="2">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                  <polyline points="14 2 14 8 20 8"/>
+                </svg>
+              </div>
+              <div>
+                <div style={{ fontSize: '0.72rem', color: '#94A3B8', fontWeight: 600 }}>RFP</div>
+                <div style={{ fontSize: '0.8rem', color: '#1E293B', fontWeight: 600 }}>{rfpFile.name}</div>
+              </div>
+            </div>
+          )}
+          {bidFiles.length > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div style={{ width: 28, height: 28, borderRadius: 6, background: '#DCFCE7', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#16A34A" strokeWidth="2">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                  <polyline points="14 2 14 8 20 8"/>
+                </svg>
+              </div>
+              <div>
+                <div style={{ fontSize: '0.72rem', color: '#94A3B8', fontWeight: 600 }}>BID{bidFiles.length > 1 ? 'S' : ''}</div>
+                <div style={{ fontSize: '0.8rem', color: '#1E293B', fontWeight: 600 }}>{bidFiles.map(f => f.name).join(', ')}</div>
+              </div>
+            </div>
+          )}
+          <button onClick={() => setPhase('upload')} style={{
+            marginLeft: 'auto', background: 'none', border: '1px solid #E2E8F0',
+            borderRadius: 6, padding: '0.35rem 0.75rem', cursor: 'pointer',
+            fontSize: '0.75rem', color: '#64748B', fontWeight: 600,
+          }}>← Change files</button>
+        </div>
+
+        {error && (
+          <div style={{
+            background: '#FFF1F2', border: '1px solid #FECDD3', borderLeft: '4px solid #EF4444',
+            borderRadius: 10, padding: '1rem 1.25rem', marginBottom: '1.5rem',
+          }}>
+            <div style={{ fontWeight: 700, color: '#BE123C', marginBottom: 4 }}>Evaluation Failed</div>
+            <div style={{ fontSize: '0.875rem', color: '#9F1239' }}>{error}</div>
+          </div>
+        )}
+
+        <div className="card" style={{ padding: '2rem' }}>
+          <div style={{ fontWeight: 700, fontSize: '1rem', color: '#1E293B', marginBottom: '0.5rem' }}>
+            Scoring Criteria
+          </div>
+          <div style={{ fontSize: '0.8rem', color: '#64748B', marginBottom: '1.25rem' }}>
+            Add categories and questions. The AI will score the bid on each one.
+          </div>
+          <CustomCriteriaForm value={customCriteria} onChange={setCustomCriteria} />
+          <div style={{ borderTop: '1px solid #E2E8F0', paddingTop: '1.5rem', textAlign: 'center', marginTop: '1.5rem' }}>
+            <button
+              className="btn btn-primary"
+              style={{ padding: '0.75rem 2.5rem', fontSize: '1rem' }}
+              disabled={!isCriteriaReady}
+              onClick={handleEvaluateCustom}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+              </svg>
+              Run Evaluation
+            </button>
+            <p style={{ marginTop: 10, fontSize: '0.78rem', color: '#94A3B8' }}>
+              Powered by Groq LLaMA — results in 30–90 seconds
+            </p>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="page-content">
       <div style={{ marginBottom: '2rem' }}>
@@ -482,6 +819,7 @@ export default function EvaluatePage() {
             <div style={{ fontWeight: 700, fontSize: '1rem', marginBottom: '1.25rem', color: '#1E293B' }}>
               Upload Documents
             </div>
+
             <div style={{ display: 'flex', gap: '1.5rem', marginBottom: '2rem', alignItems: 'stretch', minHeight: 200 }}>
               <UploadZone
                 label="RFP / Tender Document"

@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import re
+from datetime import date
 from typing import List, Optional
 
 from dotenv import load_dotenv
@@ -324,21 +325,30 @@ def _extract_bid_sections(bid_text: str, criteria_list: list, max_chars: int) ->
 
 def _rfp_extract_prompt(chunk: str) -> str:
     return (
-        f"Extract scoring criteria, marks, and evaluation parameters from this tender document section.\n\n"
+        f"You are reading a tender/RFP document section. Your task is to extract the SCORING MATRIX only.\n\n"
         f"{chunk}\n\n"
-        f"CRITICAL INSTRUCTIONS:\n"
-        f"1. Do NOT group the main categories under a single category or use the document title as a category. The main categories are typically:\n"
-        f"   - 'Category A: Bidder GenAI Delivery Capability' (or similar)\n"
-        f"   - 'Category B: CSP Capabilities & Experience' (or similar)\n"
-        f"   - 'Technical Presentation & Live Demo' (or similar)\n"
-        f"2. The 'subcriteria' list under each category MUST be a FLAT list of all criteria or subcriteria. Do NOT nest 'subcriteria' inside another 'subcriterion'.\n"
-        f"3. You must keep the exact prefixes for all criteria names as they appear in the document (e.g. 'Criterion 1: GenAI Use Cases Delivered', 'Sub-Criterion 1.a: GenAI Experience in Organisation', 'Criterion 4: CSP GenAI Platform Capabilities', 'Sub-Criterion 6.b: Live GenAI Demonstration'). Do not strip these prefixes.\n"
-        f"4. Set \"mandatory\":true for any sub-criterion the document explicitly labels as mandatory, compulsory, essential, must-meet, or required (i.e. a criterion the vendor MUST satisfy regardless of overall score). Set \"mandatory\":false for all purely point-scored criteria.\n\n"
-        f"Return ONLY JSON matching this structure:\n"
+        f"STRICT RULES — read carefully before responding:\n\n"
+        f"RULE 0 — THE MOST IMPORTANT RULE:\n"
+        f"  Set rules_found=false and return EMPTY scoring_categories if the document does NOT explicitly "
+        f"state numeric marks, points, scores, or weightage against each criterion. "
+        f"A document that merely lists requirements, questions, or section headings WITHOUT attaching "
+        f"numeric marks to them is NOT a scoring rubric. Do NOT invent, guess, or assume any marks.\n"
+        f"  Examples that should return rules_found=false:\n"
+        f"    - 'Please provide your company overview and team details' (no marks stated)\n"
+        f"    - 'Section 3: Technical Approach — describe your methodology' (no marks stated)\n"
+        f"  Examples that should return rules_found=true:\n"
+        f"    - 'Technical Experience: max 20 marks'\n"
+        f"    - 'Criterion 1.a: GenAI Use Cases — 10 points'\n\n"
+        f"RULE 1: Do NOT group categories under a single parent. Each scoring category is independent.\n"
+        f"RULE 2: subcriteria must be a FLAT list — no nesting.\n"
+        f"RULE 3: Preserve exact criterion names and prefixes as they appear in the document.\n"
+        f"RULE 4: Set mandatory=true only for criteria the document explicitly labels as mandatory/compulsory/must-meet.\n\n"
+        f"Return ONLY JSON:\n"
         f'{{"rules_found":true,"scoring_categories":[{{"category":"Category Name","max_marks":70,"weight_percent":70,'
         f'"subcriteria":[{{"criterion":"Sub-Criterion Name","max_marks":20,"mandatory":false}}]}}],'
         f'"threshold":{{"overall_pass_mark":70,"category_minimums":[]}},"mandatory_disqualifiers":[]}}\n\n'
-        f"Set rules_found=false only if this section has absolutely no evaluation criteria."
+        f"If no explicit numeric marks exist anywhere in this text: "
+        f'return exactly {{"rules_found":false,"scoring_categories":[],"threshold":{{"overall_pass_mark":0,"category_minimums":[]}},"mandatory_disqualifiers":[]}}'
     )
 
 
@@ -372,10 +382,25 @@ async def stage2_extract_rules(rfp_text: str) -> EvaluationRules:
     all_disq: list[str] = []
     pass_mark = 0.0
     cat_mins: dict[str, dict] = {}
+    # Trust the LLM's own rules_found signal — True only when it sees EXPLICIT numeric marks
+    any_explicit_rules = False
 
     for chunk in chunks:
         try:
             data = _parse_object(await _call(_rfp_extract_prompt(chunk)))
+
+            # Only accept categories from this chunk if the LLM confirmed explicit rules
+            chunk_has_rules = bool(data.get("rules_found", False))
+            if chunk_has_rules:
+                any_explicit_rules = True
+            else:
+                # LLM said no explicit marks in this chunk — skip its categories
+                print(f"[Stage2 chunk] rules_found=false — skipping fabricated categories")
+                for d in _normalize_disqualifiers(data.get("mandatory_disqualifiers", [])):
+                    if d not in all_disq:
+                        all_disq.append(d)
+                continue
+
             for cat in data.get("scoring_categories", []):
                 key = cat.get("category", "").strip().lower()
                 if not key:
@@ -474,15 +499,6 @@ async def stage2_extract_rules(rfp_text: str) -> EvaluationRules:
             filtered.append(s)
         cat.subcriteria = filtered
 
-    # Absolute fallback — use generic structure so evaluation never crashes
-    if not categories:
-        print("[Stage2] No criteria found — using generic fallback structure")
-        categories = [
-            ScoringCategory(category="Technical Bid", max_marks=70, weight_percent=70, subcriteria=[]),
-            ScoringCategory(category="Commercial Bid", max_marks=30, weight_percent=30, subcriteria=[]),
-        ]
-        pass_mark = 70.0
-
     threshold = Threshold(
         overall_pass_mark=pass_mark,
         category_minimums=[
@@ -492,7 +508,7 @@ async def stage2_extract_rules(rfp_text: str) -> EvaluationRules:
     )
 
     return EvaluationRules(
-        rules_found=bool(all_cats),
+        rules_found=any_explicit_rules,
         scoring_categories=categories,
         threshold=threshold,
         mandatory_disqualifiers=all_disq,
@@ -538,6 +554,8 @@ async def stage3_parse_vendor_response(
         _FUTURE_EVENT_KEYWORDS = ["presentation", "demonstration", "demo", "live demo", "showcase"]
         is_future_event = any(kw in cat.category.lower() for kw in _FUTURE_EVENT_KEYWORDS)
 
+        today = date.today().strftime("%B %d, %Y")
+
         scoring_instruction = (
             "This is a broad category assessment. Award 'Met' if the bid clearly addresses "
             "this category, 'Partial' if the bid partially addresses it, 'Not Met' only if "
@@ -551,6 +569,14 @@ async def stage3_parse_vendor_response(
             "- 'Not Met': No mention of the criterion, or vendor explicitly cannot meet it. Set marks_awarded = 0.\n"
             "Do NOT score 'Not Met' simply because the event has not yet occurred."
             if is_future_event else
+            f"PASS/FAIL SCORING (today is {today}):\n"
+            "Evaluate each criterion as a simple binary check — there are no tiers.\n"
+            "- 'Met' (marks_awarded = max_marks): The bid clearly satisfies the requirement.\n"
+            "- 'Not Met' (marks_awarded = 0): The bid does not satisfy the requirement.\n"
+            "Do NOT invent tiers or partial credit. For numeric minimums (e.g. 'minimum 5 years'), "
+            "use today's date to calculate the duration and mark 'Met' if the vendor meets or exceeds it.\n"
+            "If the requirement is 'must include X' and the bid includes X, mark as Met."
+            if not rfp_scoring_text else
             "TIERED SCORING INSTRUCTIONS:\n"
             "Many criteria have tiered marks (e.g. 3+ BFSI cases = 10 marks, 2 cases = 6 marks, 1 case = 3 marks; "
             "or 1000+ users = 10 marks, 100-999 users = 6 marks; "
@@ -779,16 +805,14 @@ Return ONLY the summary text — no JSON, no headers."""
 
 
 # ---------------------------------------------------------------------------
-# Orchestrator — full pipeline
+# Orchestrator — shared stages 3-6
 # ---------------------------------------------------------------------------
 
-async def run_full_evaluation(rfp_text: str, bid_text: str) -> EvaluationReport:
-    rules = await stage2_extract_rules(rfp_text)
-
-    # stage2 now has a built-in fallback — scoring_categories will always be non-empty
-
-    # Extract the RFP scoring section to pass into stage3 for tiered mark evaluation
-    rfp_scoring_text    = _extract_scoring_sections(rfp_text, MAX_RFP_CHARS)
+async def _run_pipeline(
+    bid_text: str,
+    rules: EvaluationRules,
+    rfp_scoring_text: str = "",
+) -> EvaluationReport:
     criteria_evals      = await stage3_parse_vendor_response(bid_text, rules, rfp_scoring_text)
     category_results    = stage4_calculate_scores(criteria_evals, rules)
     disqualifier_checks = await stage4b_check_disqualifiers(
@@ -826,3 +850,16 @@ async def run_full_evaluation(rfp_text: str, bid_text: str) -> EvaluationReport:
         executive_summary=executive_summary,
         rules=rules,
     )
+
+
+async def run_full_evaluation(rfp_text: str, bid_text: str) -> EvaluationReport:
+    rules = await stage2_extract_rules(rfp_text)
+    if not rules.rules_found:
+        raise ValueError("NO_RULES_FOUND")
+    rfp_scoring_text = _extract_scoring_sections(rfp_text, MAX_RFP_CHARS)
+    return await _run_pipeline(bid_text, rules, rfp_scoring_text)
+
+
+async def run_evaluation_with_rules(bid_text: str, rules: EvaluationRules) -> EvaluationReport:
+    """Run evaluation stages 3-6 using caller-supplied rules (no RFP needed)."""
+    return await _run_pipeline(bid_text, rules)

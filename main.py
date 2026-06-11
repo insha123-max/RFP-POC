@@ -1,18 +1,27 @@
 """FastAPI application for the RFP Evaluator."""
 
+import json
 import os
 from typing import List
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 
 from document import extract_text
 from export import generate_word_report
-from models import EvaluationReport, OverrideRequest
-from pipeline import run_full_evaluation
+from models import (
+    CategoryMinimum,
+    EvaluationReport,
+    EvaluationRules,
+    OverrideRequest,
+    ScoringCategory,
+    SubCriterion,
+    Threshold,
+)
+from pipeline import run_evaluation_with_rules, run_full_evaluation
 
 load_dotenv()
 
@@ -65,6 +74,88 @@ async def evaluate(
                 ),
             )
         raise HTTPException(status_code=500, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Evaluation failed: {exc}")
+
+
+def _build_rules_from_custom(data: dict) -> EvaluationRules:
+    """Convert the frontend custom-criteria payload into EvaluationRules."""
+    threshold_pct = float(data.get("threshold", 70))
+    cats_data = data.get("categories", [])
+
+    total_marks = sum(
+        sum(float(c.get("max_marks", 0)) for c in cat.get("criteria", []))
+        for cat in cats_data
+    )
+
+    scoring_categories: list[ScoringCategory] = []
+    category_minimums:  list[CategoryMinimum]  = []
+
+    for i, cat in enumerate(cats_data):
+        cat_marks = sum(float(c.get("max_marks", 0)) for c in cat.get("criteria", []))
+        weight = (
+            round(cat_marks / total_marks * 100, 2) if total_marks > 0
+            else round(100 / len(cats_data), 2)
+        )
+        subcriteria = [
+            SubCriterion(
+                criterion=c.get("question") or f"Question {j + 1}",
+                max_marks=float(c.get("max_marks", 10)),
+                mandatory=bool(c.get("mandatory", False)),
+            )
+            for j, c in enumerate(cat.get("criteria", []))
+        ]
+        cat_name = cat.get("name") or f"Category {i + 1}"
+        scoring_categories.append(
+            ScoringCategory(
+                category=cat_name,
+                max_marks=cat_marks,
+                weight_percent=weight,
+                subcriteria=subcriteria,
+            )
+        )
+        min_req = cat.get("minimum_required")
+        if min_req is not None and float(min_req) > 0:
+            category_minimums.append(
+                CategoryMinimum(category=cat_name, minimum_percent=float(min_req))
+            )
+
+    return EvaluationRules(
+        rules_found=True,
+        scoring_categories=scoring_categories,
+        threshold=Threshold(
+            overall_pass_mark=threshold_pct,
+            category_minimums=category_minimums,
+        ),
+        mandatory_disqualifiers=[],
+    )
+
+
+@app.post("/api/evaluate-custom", response_model=EvaluationReport)
+async def evaluate_custom(
+    bid_files: List[UploadFile] = File(..., description="Vendor bid / response documents"),
+    criteria_json: str = Form(..., description="JSON string of custom evaluation criteria"),
+):
+    try:
+        criteria_data = json.loads(criteria_json)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="criteria_json is not valid JSON")
+
+    bid_parts = []
+    for i, bid_file in enumerate(bid_files):
+        bid_bytes = await bid_file.read()
+        bid_text, bid_err = extract_text(bid_file.filename or f"bid_{i + 1}.pdf", bid_bytes)
+        if bid_err:
+            raise HTTPException(status_code=400, detail=f"Bid document '{bid_file.filename}' error: {bid_err}")
+        header = f"=== BID DOCUMENT {i + 1}: {bid_file.filename} ===" if len(bid_files) > 1 else ""
+        bid_parts.append(f"{header}\n{bid_text}".strip())
+    combined_bid_text = "\n\n".join(bid_parts)
+
+    rules = _build_rules_from_custom(criteria_data)
+
+    try:
+        report = await run_evaluation_with_rules(combined_bid_text, rules)
+        return report
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Evaluation failed: {exc}")
 

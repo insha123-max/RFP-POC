@@ -11,10 +11,12 @@ function stripExt(name) {
 
 function deriveWeight(c, allCriteria) {
   if (c.is_mandatory) return 'Critical'
-  // Fall back: treat the top-tier marks criteria as Critical when no explicit mandatory flag
-  const maxMark = Math.max(...(allCriteria || []).map(x => x.max_marks ?? 0), 0)
-  if (maxMark > 0 && c.max_marks >= maxMark * 0.75) return 'Critical'
-  return 'Low'
+  const marks = (allCriteria || []).map(x => x.max_marks ?? 0)
+  const maxMark = Math.max(...marks, 0)
+  const uniqueMarks = new Set(marks)
+  // Only elevate to Critical when marks vary AND this criterion has notably high marks
+  if (uniqueMarks.size > 1 && maxMark > 0 && c.max_marks >= maxMark * 0.75) return 'Critical'
+  return 'Standard'
 }
 
 /* ── Badges ─────────────────────────────────────────────────────────────── */
@@ -24,7 +26,7 @@ function statusBadge(s) {
 }
 
 function weightBadge(w) {
-  const map = { Critical: 'badge-weight-critical', Low: 'badge-weight-medium' }
+  const map = { Critical: 'badge-weight-critical', Standard: 'badge-weight-medium', Low: 'badge-weight-medium' }
   return <span className={`badge ${map[w] || 'badge-weight-medium'}`} style={{ fontSize: '0.7rem' }}>{w}</span>
 }
 
