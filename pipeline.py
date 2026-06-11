@@ -24,12 +24,21 @@ from models import (
 
 load_dotenv()
 
-# Model fallback list — tried in order when daily/per-request limits are hit
-# llama-3.1-8b-instant : 500K tokens/day,  6K TP
-# M  (primary — highest daily quota)
-# llama-3.3-70b-versatile: 100K tokens/day, 12K TPM  (fallback — better quality)
-_MODELS = ["llama-3.1-8b-instant", "llama-3.3-70b-versatile"]
-MODEL_NAME     = _MODELS[0]
+# Model fallback list — tried in order when rate-limited or decommissioned.
+# Groq free-tier daily limits (approx):
+#   llama-3.1-8b-instant       500K TPD,  6K TPM   — primary (highest quota)
+#   llama-3.3-70b-versatile    100K TPD, 12K TPM   — best quality
+#   gemma2-9b-it               500K TPD, 15K TPM   — Google Gemma, large quota
+#   llama-3.1-70b-versatile    100K TPD,  6K TPM   — additional 70B pool
+#   llama-3.2-3b-preview      14.4K TPD, 15K TPM   — small fast model
+_MODELS = [
+    "llama-3.1-8b-instant",
+    "llama-3.3-70b-versatile",
+    "gemma2-9b-it",
+    "llama-3.1-70b-versatile",
+    "llama-3.2-3b-preview",
+]
+MODEL_NAME = _MODELS[0]
 
 # Chunk sizes calibrated for llama-3.1-8b-instant's 6K TPM limit.
 # At ~1.5 tokens/char for dense docs: 3000 chars ≈ 4500 tokens → safe under 6K.
@@ -75,14 +84,24 @@ async def _call(prompt: str) -> str:
             return resp.choices[0].message.content
         except Exception as exc:
             err = str(exc)
-            # Daily limit (TPD) or per-request limit (TPM) → try next model
-            if "429" in err or "rate" in err.lower() or "quota" in err.lower():
-                print(f"[_call] {model} rate-limited, trying next model. Error: {err[:120]}")
+            # Skip to next model on: rate limits (429) OR decommissioned models (400)
+            is_rate_limit    = "429" in err or "rate" in err.lower() or "quota" in err.lower()
+            is_decommissioned = "decommission" in err.lower() or "deprecated" in err.lower() or "no longer supported" in err.lower()
+            if is_rate_limit or is_decommissioned:
+                reason = "decommissioned" if is_decommissioned else "rate-limited"
+                print(f"[_call] {model} {reason}, trying next model. Error: {err[:160]}")
                 last_exc = exc
-                await asyncio.sleep(3)
+                if is_rate_limit:
+                    await asyncio.sleep(2)
                 continue
-            raise   # non-rate-limit error: raise immediately
-    raise last_exc
+            raise   # other errors (auth, network, etc.) — raise immediately
+    # All models exhausted — wait a moment and raise a clear error
+    raise RuntimeError(
+        "All Groq models are currently rate-limited. "
+        "Please wait a few minutes and try again, or check https://console.groq.com "
+        "to see your remaining daily quota. "
+        f"Last error: {last_exc}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -313,7 +332,8 @@ def _rfp_extract_prompt(chunk: str) -> str:
         f"   - 'Category B: CSP Capabilities & Experience' (or similar)\n"
         f"   - 'Technical Presentation & Live Demo' (or similar)\n"
         f"2. The 'subcriteria' list under each category MUST be a FLAT list of all criteria or subcriteria. Do NOT nest 'subcriteria' inside another 'subcriterion'.\n"
-        f"3. You must keep the exact prefixes for all criteria names as they appear in the document (e.g. 'Criterion 1: GenAI Use Cases Delivered', 'Sub-Criterion 1.a: GenAI Experience in Organisation', 'Criterion 4: CSP GenAI Platform Capabilities', 'Sub-Criterion 6.b: Live GenAI Demonstration'). Do not strip these prefixes.\n\n"
+        f"3. You must keep the exact prefixes for all criteria names as they appear in the document (e.g. 'Criterion 1: GenAI Use Cases Delivered', 'Sub-Criterion 1.a: GenAI Experience in Organisation', 'Criterion 4: CSP GenAI Platform Capabilities', 'Sub-Criterion 6.b: Live GenAI Demonstration'). Do not strip these prefixes.\n"
+        f"4. Set \"mandatory\":true for any sub-criterion the document explicitly labels as mandatory, compulsory, essential, must-meet, or required (i.e. a criterion the vendor MUST satisfy regardless of overall score). Set \"mandatory\":false for all purely point-scored criteria.\n\n"
         f"Return ONLY JSON matching this structure:\n"
         f'{{"rules_found":true,"scoring_categories":[{{"category":"Category Name","max_marks":70,"weight_percent":70,'
         f'"subcriteria":[{{"criterion":"Sub-Criterion Name","max_marks":20,"mandatory":false}}]}}],'
@@ -427,7 +447,12 @@ async def stage2_extract_rules(rfp_text: str) -> EvaluationRules:
     categories = [
         ScoringCategory(
             category=c["category"], max_marks=m, weight_percent=w,
-            subcriteria=[SubCriterion(**s) for s in c.get("subcriteria", [])],
+            subcriteria=[
+                SubCriterion(**s) if isinstance(s, dict)
+                else SubCriterion(criterion=str(s), max_marks=0)
+                for s in c.get("subcriteria", [])
+                if s
+            ],
         )
         for c, m, w in raw_cats
     ]
@@ -559,6 +584,12 @@ Return ONLY a JSON array. For each criterion include marks_awarded as the ACTUAL
 
         try:
             items = _parse_array(await _call(prompt))
+            # Trust stage2's mandatory flag — don't let the scoring LLM override it
+            mandatory_lookup = {c["criterion"]: c.get("mandatory", False) for c in criteria_list}
+            for item in items:
+                crit_name = item.get("criterion", "")
+                if crit_name in mandatory_lookup:
+                    item["is_mandatory"] = mandatory_lookup[crit_name]
             all_evals.extend([CriterionEvaluation(**item) for item in items])
         except Exception:
             for c in criteria_list:
@@ -582,16 +613,16 @@ def stage4_calculate_scores(
     rules: EvaluationRules,
 ) -> List[CategoryResult]:
     for ce in criteria_evals:
+        # Remap Partial → Not Met: only Met earns marks
+        if ce.compliance_status == "Partial":
+            ce.compliance_status = "Not Met"
         if ce.compliance_status == "Not Met":
-            # Always zero for explicitly not met
             ce.marks_awarded = 0.0
-        elif 0 < ce.marks_awarded <= ce.max_marks:
-            # LLM already provided tiered marks — respect them
-            pass
         elif ce.compliance_status == "Met":
-            ce.marks_awarded = ce.max_marks
-        elif ce.compliance_status == "Partial":
-            ce.marks_awarded = round(ce.max_marks * 0.5, 2)
+            if 0 < ce.marks_awarded <= ce.max_marks:
+                pass  # LLM provided tiered marks — respect them
+            else:
+                ce.marks_awarded = ce.max_marks
         else:
             ce.marks_awarded = 0.0
 

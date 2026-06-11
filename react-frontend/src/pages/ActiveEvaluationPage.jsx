@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useEvaluation } from '../context/EvaluationContext'
-import { applyOverride, exportWord } from '../api'
+import { exportWord } from '../api'
 
 const COLORS = ['#4F46E5', '#8B5CF6', '#22C55E', '#F59E0B', '#EC4899', '#14B8A6']
 
@@ -9,8 +9,11 @@ function stripExt(name) {
   return name ? name.replace(/\.[^.]+$/, '') : 'Evaluated Vendor'
 }
 
-function deriveWeight(c) {
+function deriveWeight(c, allCriteria) {
   if (c.is_mandatory) return 'Critical'
+  // Fall back: treat the top-tier marks criteria as Critical when no explicit mandatory flag
+  const maxMark = Math.max(...(allCriteria || []).map(x => x.max_marks ?? 0), 0)
+  if (maxMark > 0 && c.max_marks >= maxMark * 0.75) return 'Critical'
   return 'Low'
 }
 
@@ -154,118 +157,11 @@ function RiskItem({ vendor, desc, type, severity }) {
   )
 }
 
-/* ── Override Panel ─────────────────────────────────────────────────────── */
-function OverridePanel({ report, onUpdate }) {
-  const [cat, setCat]       = useState('')
-  const [crit, setCrit]     = useState('')
-  const [marks, setMarks]   = useState('')
-  const [reason, setReason] = useState('')
-  const [pending, setPending] = useState([])
-  const [loading, setLoading] = useState(false)
-  const [success, setSuccess] = useState(false)
-
-  const catObj  = report?.category_results?.find(c => c.category === cat)
-  const critObj = catObj?.criteria?.find(c => c.criterion === crit)
-
-  const addOverride = () => {
-    if (!cat || !crit || marks === '') return
-    const m = parseFloat(marks)
-    if (isNaN(m) || m < 0 || (critObj && m > critObj.max_marks)) return alert('Invalid marks')
-    setPending(p => [...p, { category: cat, criterion: crit, new_marks: m, reason }])
-    setMarks(''); setReason('')
-    setSuccess(false)
-  }
-
-  const recalculate = async () => {
-    if (!pending.length) return
-    setLoading(true)
-    setSuccess(false)
-    try {
-      const updated = await applyOverride(report, pending)
-      onUpdate(updated)
-      setPending([])
-      setSuccess(true)
-      setTimeout(() => setSuccess(false), 4000)
-    } catch (e) { alert(e.message) }
-    setLoading(false)
-  }
-
-  const sel = { padding: '0.55rem 0.75rem', border: '1px solid #E5E7EB', borderRadius: 8, fontSize: '0.85rem', background: '#fff', width: '100%', outline: 'none' }
-
-  return (
-    <div>
-      <div className="card-title" style={{ fontSize: '0.9rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: 6 }}>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4F46E5" strokeWidth="2">
-          <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
-        </svg>
-        Committee Override
-      </div>
-      <p style={{ fontSize: '0.78rem', color: '#6B7280', marginBottom: '1rem' }}>
-        Adjust any criterion score if you disagree with the AI assessment.
-      </p>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.625rem', marginBottom: '0.625rem' }}>
-        <div>
-          <label style={{ fontSize: '0.7rem', fontWeight: 700, color: '#6B7280', display: 'block', marginBottom: 4, textTransform: 'uppercase' }}>Category</label>
-          <select style={sel} value={cat} onChange={e => { setCat(e.target.value); setCrit('') }}>
-            <option value="">Select category</option>
-            {report.category_results.map(c => <option key={c.category}>{c.category}</option>)}
-          </select>
-        </div>
-        <div>
-          <label style={{ fontSize: '0.7rem', fontWeight: 700, color: '#6B7280', display: 'block', marginBottom: 4, textTransform: 'uppercase' }}>Criterion</label>
-          <select style={sel} value={crit} onChange={e => setCrit(e.target.value)} disabled={!cat}>
-            <option value="">Select criterion</option>
-            {catObj?.criteria.map(c => <option key={c.criterion} value={c.criterion}>{c.criterion} (max {c.max_marks})</option>)}
-          </select>
-        </div>
-        <div>
-          <label style={{ fontSize: '0.7rem', fontWeight: 700, color: '#6B7280', display: 'block', marginBottom: 4, textTransform: 'uppercase' }}>New Marks</label>
-          <input style={sel} type="number" min="0" step="0.5" placeholder="e.g. 8" value={marks} onChange={e => setMarks(e.target.value)} />
-        </div>
-        <div>
-          <label style={{ fontSize: '0.7rem', fontWeight: 700, color: '#6B7280', display: 'block', marginBottom: 4, textTransform: 'uppercase' }}>Reason</label>
-          <input style={sel} type="text" placeholder="Why are you overriding?" value={reason} onChange={e => setReason(e.target.value)} />
-        </div>
-      </div>
-      <button className="btn btn-outline btn-sm" onClick={addOverride} disabled={!cat || !crit || marks === ''}>
-        + Add Override
-      </button>
-      {pending.length > 0 && (
-        <div style={{ marginTop: '0.875rem' }}>
-          <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#6B7280', marginBottom: 6 }}>Pending:</div>
-          {pending.map((o, i) => (
-            <div key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: '#EEF2FF', color: '#4F46E5', padding: '3px 10px', borderRadius: 999, fontSize: '0.75rem', fontWeight: 700, marginRight: 6, marginBottom: 6 }}>
-              {o.criterion}: {o.new_marks}
-              <span style={{ cursor: 'pointer' }} onClick={() => setPending(p => p.filter((_, j) => j !== i))}>×</span>
-            </div>
-          ))}
-          <div style={{ marginTop: '0.875rem' }}>
-            <button className="btn btn-primary btn-sm" onClick={recalculate} disabled={loading}>
-              {loading ? 'Recalculating…' : '↻ Recalculate'}
-            </button>
-          </div>
-        </div>
-      )}
-      {success && (
-        <div style={{ marginTop: '0.875rem', display: 'flex', alignItems: 'center', gap: 8, background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 8, padding: '0.6rem 0.875rem' }}>
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#16A34A" strokeWidth="2.5">
-            <path d="M20 6L9 17l-5-5"/>
-          </svg>
-          <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#15803D' }}>Scores successfully recalculated</span>
-        </div>
-      )}
-    </div>
-  )
-}
-
 /* ── Main Page ──────────────────────────────────────────────────────────── */
 export default function ActiveEvaluationPage() {
-  const { report: initialReport, setReport, rfpName, bidName } = useEvaluation()
-  const [report, setLocalReport] = useState(initialReport)
+  const { report, rfpName, bidName } = useEvaluation()
   const [downloading, setDownloading] = useState(false)
   const navigate = useNavigate()
-
-  const updateReport = r => { setLocalReport(r); setReport(r) }
 
   /* ── Empty state ──────────────────────────────────────────────────────── */
   if (!report) return (
@@ -301,17 +197,19 @@ export default function ActiveEvaluationPage() {
     })),
   }
 
-  const criteria = report.category_results.flatMap(cr =>
-    cr.criteria.map(c => ({
+  const allRawCriteria = report.category_results.flatMap(cr => cr.criteria)
+  const criteria = allRawCriteria.map(c => {
+    const cr = report.category_results.find(r => r.criteria.includes(c))
+    return {
       name: c.criterion,
-      category: cr.category,
-      weight: deriveWeight(c),
+      category: cr?.category ?? '',
+      weight: deriveWeight(c, allRawCriteria),
       v1: c.compliance_status,
       justification: c.justification,
       marks_awarded: c.marks_awarded,
       max_marks: c.max_marks,
-    }))
-  )
+    }
+  })
 
   const risks = report.risk_items.map(r => ({
     vendor: vendorName,
@@ -579,9 +477,6 @@ export default function ActiveEvaluationPage() {
           {risks.length === 0
             ? <div style={{ color: '#6B7280', fontSize: '0.875rem' }}>No risks identified.</div>
             : risks.map((r, i) => <RiskItem key={i} {...r} />)}
-        </div>
-        <div className="card" style={{ padding: '1.5rem' }}>
-          <OverridePanel report={report} onUpdate={updateReport} />
         </div>
       </div>
     </div>
