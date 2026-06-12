@@ -162,8 +162,12 @@ export default function DashboardPage() {
   const avgScore   = totalEvals > 0 ? Math.round(history.reduce((s, e) => s + e.score, 0) / totalEvals) : 0
   const totalRisks = history.reduce((s, e) => s + (e.report?.risk_items?.length || 0), 0)
 
+  const PAGE_SIZE  = 5
+  const [page, setPage] = useState(0)
+  const totalPages = Math.ceil(history.length / PAGE_SIZE)
+
   const latest  = history[0]
-  const recent  = history.slice(0, 5)
+  const recent  = history.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
 
   // AI insights derived from real data
   const insights = latest ? [
@@ -237,6 +241,40 @@ export default function DashboardPage() {
                   onDelete={() => deleteFromHistory(entry.id)}
                 />
               ))}
+
+              {totalPages > 1 && (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '0.75rem', paddingTop: '0.75rem', borderTop: '1px solid #F3F4F6' }}>
+                  <button
+                    onClick={() => setPage(p => Math.max(0, p - 1))}
+                    disabled={page === 0}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 4,
+                      padding: '6px 14px', borderRadius: 8, fontSize: '0.8rem', fontWeight: 600,
+                      border: '1px solid #E5E7EB', cursor: page === 0 ? 'not-allowed' : 'pointer',
+                      background: page === 0 ? '#F9FAFB' : '#fff',
+                      color: page === 0 ? '#D1D5DB' : '#374151',
+                    }}
+                  >
+                    ← Previous
+                  </button>
+                  <span style={{ fontSize: '0.78rem', color: '#6B7280' }}>
+                    Page {page + 1} of {totalPages} &nbsp;·&nbsp; {history.length} total
+                  </span>
+                  <button
+                    onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
+                    disabled={page === totalPages - 1}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 4,
+                      padding: '6px 14px', borderRadius: 8, fontSize: '0.8rem', fontWeight: 600,
+                      border: '1px solid #E5E7EB', cursor: page === totalPages - 1 ? 'not-allowed' : 'pointer',
+                      background: page === totalPages - 1 ? '#F9FAFB' : '#fff',
+                      color: page === totalPages - 1 ? '#D1D5DB' : '#374151',
+                    }}
+                  >
+                    Next →
+                  </button>
+                </div>
+              )}
             </div>
 
             {/* Right: AI Insights + Risk Monitoring */}
@@ -288,7 +326,10 @@ export default function DashboardPage() {
 
           {/* Recent Activity */}
           <div className="card" style={{ padding: '1.5rem' }}>
-            <div className="card-title">Recent Activity</div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
+              <div className="card-title" style={{ marginBottom: 0 }}>Recent Activity</div>
+              <span style={{ fontSize: '0.75rem', color: '#9CA3AF' }}>Page {page + 1} of {totalPages}</span>
+            </div>
             {recent.map((entry, i) => (
               <div key={entry.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '0.85rem 0', borderBottom: i < recent.length - 1 ? '1px solid #F3F4F6' : 'none' }}>
                 <div style={{ marginTop: 5 }}>
