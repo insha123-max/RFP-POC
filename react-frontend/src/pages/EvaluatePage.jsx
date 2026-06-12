@@ -858,7 +858,7 @@ export default function EvaluatePage() {
                     sub="Official Q&A amendments to the RFP (PDF, DOCX)"
                     file={prebidFile}
                     onFile={setPrebidFile}
-                    accent="#8B5CF6"
+                    accent="#F26522"
                   />
                 </div>
                 {prebidFile && (
