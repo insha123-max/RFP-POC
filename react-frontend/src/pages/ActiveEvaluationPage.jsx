@@ -178,104 +178,28 @@ function RiskItem({ vendor, desc, type, severity }) {
   )
 }
 
-/* ── Root Cause Analysis Panel ──────────────────────────────────────────── */
-function RootCausePanel({ report, vendorName }) {
-  const gaps = []
-  for (const cr of report.category_results) {
-    for (const c of cr.criteria) {
-      const lost = (c.max_marks ?? 0) - (c.marks_awarded ?? 0)
-      if (lost > 0) {
-        gaps.push({
-          criterion: c.criterion,
-          category: cr.category,
-          max_marks: c.max_marks ?? 0,
-          marks_awarded: c.marks_awarded ?? 0,
-          marks_lost: lost,
-          justification: c.justification ?? '',
-        })
-      }
-    }
-  }
-  gaps.sort((a, b) => b.marks_lost - a.marks_lost)
-
-  if (gaps.length === 0) return null
-
-  const failedCats = report.category_results.filter(
-    cr => cr.minimum_required != null && Math.round(cr.percent_achieved) < cr.minimum_required
-  )
-  let reason = 'The overall score did not reach the required threshold.'
-  if (report.disqualified) {
-    reason = 'A mandatory eligibility condition was not met.'
-  } else if (failedCats.length > 0) {
-    const names = failedCats.map(c => c.category).join(' and ')
-    reason = `Score fell below the minimum required in: ${names}.`
-  }
+/* ── Root Cause Panel ───────────────────────────────────────────────────── */
+function RootCausePanel({ report }) {
+  if (!report.executive_summary) return null
 
   return (
     <div style={{
-      border: '1px solid #E5E7EB',
-      borderTop: '3px solid #DC2626',
-      borderRadius: 10,
-      background: '#fff',
-      marginBottom: '1.5rem',
-      overflow: 'hidden',
+      background: '#FFFBEB', border: '1px solid #FDE68A',
+      borderLeft: '4px solid #D97706', borderRadius: 10,
+      padding: '1rem 1.25rem', marginBottom: '1.5rem',
+      display: 'flex', gap: 12, alignItems: 'flex-start',
     }}>
-      {/* Header */}
-      <div style={{ padding: '0.875rem 1.25rem', borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#DC2626" strokeWidth="2.5">
-            <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
-          </svg>
-          <span style={{ fontWeight: 700, fontSize: '0.875rem', color: '#111827' }}>Why this bid failed</span>
-        </div>
-        <div style={{ flexShrink: 0, fontSize: '0.72rem', color: '#9CA3AF', paddingTop: 1 }}>
-          {gaps.length} issue{gaps.length !== 1 ? 's' : ''}
-        </div>
-      </div>
-
-      {/* Plain-language root cause */}
-      <div style={{ padding: '0.875rem 1.25rem', borderBottom: '1px solid #F3F4F6', background: '#FAFAFA' }}>
-        <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 }}>
-          Root Cause
-        </div>
-        <p style={{ fontSize: '0.82rem', color: '#374151', lineHeight: 1.65, margin: 0 }}>
-          {report.executive_summary}
-        </p>
-      </div>
-
-      {/* Gap rows */}
-      <div style={{ padding: '0.75rem 1.25rem', display: 'flex', flexDirection: 'column', gap: 6 }}>
-        <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 2 }}>
-          What was missing
-        </div>
-        {gaps.map((gap, i) => {
-          const isMissing = gap.marks_awarded === 0
-          const firstSentence = (gap.justification.match(/^[^.!?]+[.!?]/) || [gap.justification.slice(0, 120)])[0].trim()
-          return (
-            <div key={i} style={{
-              display: 'flex', alignItems: 'flex-start', gap: 10,
-              padding: '0.6rem 0.75rem',
-              borderLeft: `3px solid ${isMissing ? '#FCA5A5' : '#FDE68A'}`,
-              background: isMissing ? '#FAFAFA' : '#FFFDF5',
-              borderRadius: '0 6px 6px 0',
-            }}>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={isMissing ? '#EF4444' : '#F59E0B'} strokeWidth="2.5" style={{ flexShrink: 0, marginTop: 2 }}>
-                <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-              </svg>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontWeight: 600, fontSize: '0.82rem', color: '#374151', marginBottom: 1 }}>{gap.criterion}</div>
-                <div style={{ fontSize: '0.75rem', color: '#6B7280', lineHeight: 1.5 }}>{firstSentence}</div>
-              </div>
-              <div style={{ flexShrink: 0, fontSize: '0.72rem', color: '#9CA3AF', paddingTop: 1 }}>
-                {gap.marks_awarded}/{gap.max_marks}
-              </div>
-            </div>
-          )
-        })}
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#D97706" strokeWidth="2" style={{ flexShrink: 0, marginTop: 2 }}>
+        <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+      </svg>
+      <div>
+        <div style={{ fontWeight: 700, fontSize: '0.82rem', color: '#92400E', marginBottom: 4 }}>Root Cause</div>
+        <p style={{ fontSize: '0.82rem', color: '#78350F', lineHeight: 1.65, margin: 0 }}>{report.executive_summary}</p>
       </div>
     </div>
   )
 }
+
 
 /* ── Main Page ──────────────────────────────────────────────────────────── */
 export default function ActiveEvaluationPage() {
