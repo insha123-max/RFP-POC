@@ -658,18 +658,16 @@ def stage4_calculate_scores(
     rules: EvaluationRules,
 ) -> List[CategoryResult]:
     for ce in criteria_evals:
-        # Remap Partial → Not Met: only Met earns marks
-        if ce.compliance_status == "Partial":
-            ce.compliance_status = "Not Met"
-        if ce.compliance_status == "Not Met":
-            ce.marks_awarded = 0.0
-        elif ce.compliance_status == "Met":
-            if 0 < ce.marks_awarded <= ce.max_marks:
-                pass  # LLM provided tiered marks — respect them
-            else:
-                ce.marks_awarded = ce.max_marks
+        # If LLM said Met but gave no valid marks, award full marks
+        if ce.compliance_status == "Met" and not (0 < ce.marks_awarded <= ce.max_marks):
+            ce.marks_awarded = ce.max_marks
+        # Clamp to valid range
+        ce.marks_awarded = max(0.0, min(ce.marks_awarded, ce.max_marks))
+        # Determine compliance status by 50% threshold: >50% of max = Met, <=50% = Not Met
+        if ce.max_marks > 0:
+            ce.compliance_status = "Met" if ce.marks_awarded > ce.max_marks / 2 else "Not Met"
         else:
-            ce.marks_awarded = 0.0
+            ce.compliance_status = "Not Met"
 
     category_results = []
     # Use overall pass mark as default category minimum when RFP doesn't specify one.

@@ -184,11 +184,9 @@ async def apply_override(request: OverrideRequest):
                 old = crit.marks_awarded
                 crit.marks_awarded = min(override.new_marks, crit.max_marks)
 
-                # Update compliance_status to reflect the new marks
-                if crit.marks_awarded >= crit.max_marks:
-                    crit.compliance_status = "Met"
-                elif crit.marks_awarded > 0:
-                    crit.compliance_status = "Partial"
+                # Update compliance_status to reflect the new marks (50% threshold)
+                if crit.max_marks > 0:
+                    crit.compliance_status = "Met" if crit.marks_awarded > crit.max_marks / 2 else "Not Met"
                 else:
                     crit.compliance_status = "Not Met"
 
