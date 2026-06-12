@@ -657,42 +657,54 @@ def stage4_calculate_scores(
     criteria_evals: List[CriterionEvaluation],
     rules: EvaluationRules,
 ) -> List[CategoryResult]:
+    # First pass: resolve per-category minimum from RFP (category-specific or overall pass mark).
+    # Both count as "RFP Minimum" logic; only absence of any RFP minimum triggers 50% fallback.
+    overall_min = rules.threshold.overall_pass_mark or 0.0
+    cat_min_map: dict = {}  # category -> min_pct (float | None)
+    for cat in rules.scoring_categories:
+        min_pct: Optional[float] = None
+        for cm in rules.threshold.category_minimums:
+            if cm.category == cat.category and cm.minimum_percent > 0:
+                min_pct = cm.minimum_percent
+                break
+        if min_pct is None and overall_min > 0:
+            min_pct = overall_min
+        cat_min_map[cat.category] = min_pct
+
+    # Second pass: fix marks then set compliance status + threshold_logic per criterion.
     for ce in criteria_evals:
         # If LLM said Met but gave no valid marks, award full marks
         if ce.compliance_status == "Met" and not (0 < ce.marks_awarded <= ce.max_marks):
             ce.marks_awarded = ce.max_marks
         # Clamp to valid range
         ce.marks_awarded = max(0.0, min(ce.marks_awarded, ce.max_marks))
-        # Determine compliance status by 50% threshold: >50% of max = Met, <=50% = Not Met
+
+        min_pct = cat_min_map.get(ce.category)
         if ce.max_marks > 0:
-            ce.compliance_status = "Met" if ce.marks_awarded > ce.max_marks / 2 else "Not Met"
+            if min_pct is not None:
+                # RFP specifies a minimum — use it as the per-criterion threshold
+                threshold = ce.max_marks * (min_pct / 100)
+                ce.compliance_status = "Met" if ce.marks_awarded >= threshold else "Not Met"
+                ce.threshold_logic = f"RFP Min ({min_pct}%)"
+            else:
+                # No RFP minimum — fall back to 50% rule
+                ce.compliance_status = "Met" if ce.marks_awarded > ce.max_marks / 2 else "Not Met"
+                ce.threshold_logic = "50% Fallback"
         else:
             ce.compliance_status = "Not Met"
+            ce.threshold_logic = "N/A"
 
+    # Third pass: aggregate into category results.
     category_results = []
-    # Use overall pass mark as default category minimum when RFP doesn't specify one.
-    # This ensures every category shows a meaningful minimum (e.g. 70%).
-    overall_min = rules.threshold.overall_pass_mark or 0.0
-
     for cat in rules.scoring_categories:
-        cat_criteria = [ce for ce in criteria_evals if ce.category == cat.category]
-        raw_marks    = round(sum(ce.marks_awarded for ce in cat_criteria), 2)
+        cat_criteria  = [ce for ce in criteria_evals if ce.category == cat.category]
+        raw_marks     = round(sum(ce.marks_awarded for ce in cat_criteria), 2)
         # Cap at category max — duplicate/overlapping criteria extracted across chunks
         # can push the raw sum above max_marks, causing >100% scores.
         marks_awarded = min(raw_marks, cat.max_marks)
-        pct = round(marks_awarded / cat.max_marks * 100, 1) if cat.max_marks else 0.0
+        pct           = round(marks_awarded / cat.max_marks * 100, 1) if cat.max_marks else 0.0
 
-        # Find explicit category minimum from RFP; ignore 0% (meaningless)
-        min_pct: Optional[float] = None
-        for cm in rules.threshold.category_minimums:
-            if cm.category == cat.category and cm.minimum_percent > 0:
-                min_pct = cm.minimum_percent
-                break
-
-        # Fall back to overall threshold % so every category shows a clear minimum
-        if min_pct is None and overall_min > 0:
-            min_pct = overall_min
-
+        min_pct   = cat_min_map.get(cat.category)
         cat_passed = pct >= min_pct if min_pct is not None else pct > 0
         weighted   = round((marks_awarded / cat.max_marks) * cat.weight_percent, 2) if cat.max_marks else 0.0
 

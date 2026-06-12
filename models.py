@@ -39,10 +39,11 @@ class CriterionEvaluation(BaseModel):
     marks_awarded: float = 0.0
     vendor_claim: str
     source_reference: str
-    compliance_status: str  # "Met", "Partial", "Not Met"
+    compliance_status: str  # "Met", "Not Met"
     confidence: str  # "High", "Medium", "Low"
     justification: str
     is_mandatory: bool = False
+    threshold_logic: str = ""  # "RFP Min (X%)" or "50% Fallback"
 
 
 class CategoryResult(BaseModel):

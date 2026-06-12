@@ -184,11 +184,19 @@ async def apply_override(request: OverrideRequest):
                 old = crit.marks_awarded
                 crit.marks_awarded = min(override.new_marks, crit.max_marks)
 
-                # Update compliance_status to reflect the new marks (50% threshold)
+                # Update compliance_status + threshold_logic to reflect the new marks
+                min_required = cat_result.minimum_required
                 if crit.max_marks > 0:
-                    crit.compliance_status = "Met" if crit.marks_awarded > crit.max_marks / 2 else "Not Met"
+                    if min_required is not None:
+                        threshold = crit.max_marks * (min_required / 100)
+                        crit.compliance_status = "Met" if crit.marks_awarded >= threshold else "Not Met"
+                        crit.threshold_logic = f"RFP Min ({min_required}%)"
+                    else:
+                        crit.compliance_status = "Met" if crit.marks_awarded > crit.max_marks / 2 else "Not Met"
+                        crit.threshold_logic = "50% Fallback"
                 else:
                     crit.compliance_status = "Not Met"
+                    crit.threshold_logic = "N/A"
 
                 note = f" [REVIEWER OVERRIDE: {old} → {crit.marks_awarded}"
                 if override.reason:

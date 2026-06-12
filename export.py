@@ -204,28 +204,29 @@ def generate_word_report(report: EvaluationReport) -> bytes:
         if not cr.criteria:
             continue
 
-        crit_cols = ["Criterion", "Max", "Awarded", "Status", "Evidence", "Source"]
+        crit_cols = ["Criterion", "Max", "Awarded", "Status", "Logic", "Evidence", "Source"]
         ct = doc.add_table(rows=1 + len(cr.criteria), cols=len(crit_cols))
         ct.style = "Table Grid"
         _table_header_row(ct, crit_cols, bg="374151")
-        _set_col_widths(ct, [1.6, 0.45, 0.55, 0.7, 2.4, 0.9])
+        _set_col_widths(ct, [1.6, 0.45, 0.55, 0.7, 0.85, 1.9, 0.9])
 
         for i, c in enumerate(cr.criteria, start=1):
             row = ct.rows[i]
-            bg = "F0FDF4" if c.compliance_status == "Met" else (
-                 "FFFBEB" if c.compliance_status == "Partial" else "FEF2F2")
+            bg = "F0FDF4" if c.compliance_status == "Met" else "FEF2F2"
+            logic_label = c.threshold_logic or "50% Fallback"
             vals = [c.criterion, str(c.max_marks), str(c.marks_awarded),
-                    c.compliance_status, c.vendor_claim[:200], c.source_reference]
+                    c.compliance_status, logic_label, c.vendor_claim[:200], c.source_reference]
             for j, val in enumerate(vals):
                 _shade_cell(row.cells[j], bg)
                 p   = row.cells[j].paragraphs[0]
                 run = p.add_run(val)
                 run.font.size = Pt(8)
                 if j == 3:
-                    run.font.color.rgb = (GREEN if c.compliance_status == "Met"
-                                          else AMBER if c.compliance_status == "Partial"
-                                          else RED)
+                    run.font.color.rgb = GREEN if c.compliance_status == "Met" else RED
                     run.bold = True
+                if j == 4:
+                    run.font.color.rgb = BLUE if logic_label.startswith("RFP") else GREY
+                    run.bold = False
 
         doc.add_paragraph()
 

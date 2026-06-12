@@ -25,6 +25,23 @@ function statusBadge(s) {
   return                  <span className="badge badge-notmet" style={{ fontSize: '0.7rem' }}>✗ Not Met</span>
 }
 
+function logicBadge(logic) {
+  const isRfp = logic && logic.startsWith('RFP')
+  return (
+    <span style={{
+      display: 'inline-block',
+      fontSize: '0.65rem', fontWeight: 600,
+      padding: '2px 7px', borderRadius: 999,
+      background: isRfp ? '#EEF2FF' : '#F3F4F6',
+      color: isRfp ? '#4F46E5' : '#6B7280',
+      border: `1px solid ${isRfp ? '#C7D2FE' : '#E5E7EB'}`,
+      whiteSpace: 'nowrap',
+    }}>
+      {isRfp ? '📋 ' : '⚖ '}{logic || '50% Fallback'}
+    </span>
+  )
+}
+
 function weightBadge(w) {
   const map = { Critical: 'badge-weight-critical', Standard: 'badge-weight-medium', Low: 'badge-weight-medium' }
   return <span className={`badge ${map[w] || 'badge-weight-medium'}`} style={{ fontSize: '0.7rem' }}>{w}</span>
@@ -105,10 +122,11 @@ function RequirementsTable({ criteria }) {
         <table className="tbl">
           <thead>
             <tr>
-              <th style={{ width: '40%' }}>Requirement</th>
+              <th style={{ width: '38%' }}>Requirement</th>
               <th>Category</th>
               <th>Weight</th>
               <th>Status</th>
+              <th>Logic</th>
               <th>Score</th>
             </tr>
           </thead>
@@ -124,6 +142,7 @@ function RequirementsTable({ criteria }) {
                 <td style={{ fontSize: '0.78rem', color: '#6B7280' }}>{c.category}</td>
                 <td>{weightBadge(c.weight)}</td>
                 <td>{statusBadge(c.v1)}</td>
+                <td>{logicBadge(c.threshold_logic)}</td>
                 <td style={{ fontWeight: 700, color: '#4F46E5', fontSize: '0.85rem' }}>{c.marks_awarded}/{c.max_marks}</td>
               </tr>
             ))}
@@ -149,12 +168,12 @@ function RiskItem({ vendor, desc, type, severity }) {
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={cfg.icon} strokeWidth="2">
             <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
           </svg>
-          <div style={{ fontWeight: 700, fontSize: '0.875rem', color: '#111827' }}>{vendor}</div>
+          <div style={{ fontWeight: 700, fontSize: '0.875rem', color: '#111827' }}>{type}</div>
         </div>
         <span className={`badge ${cfg.badge}`} style={{ fontSize: '0.68rem' }}>{severity} Risk</span>
       </div>
       <div style={{ fontSize: '0.8rem', color: '#374151', marginBottom: 4 }}>{desc}</div>
-      <div style={{ fontSize: '0.72rem', color: '#9CA3AF', fontStyle: 'italic' }}>{type}</div>
+      <div style={{ fontSize: '0.72rem', color: '#9CA3AF' }}>{vendor}</div>
     </div>
   )
 }
@@ -309,6 +328,7 @@ export default function ActiveEvaluationPage() {
       justification: c.justification,
       marks_awarded: c.marks_awarded,
       max_marks: c.max_marks,
+      threshold_logic: c.threshold_logic || '50% Fallback',
     }
   })
 
