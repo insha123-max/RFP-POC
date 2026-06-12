@@ -69,7 +69,7 @@ def get_client() -> AsyncGroq:
     return _client
 
 
-async def _call(prompt: str) -> str:
+async def _call(prompt: str, system: str = SYSTEM) -> str:
     """Try each model in _MODELS; fall back to next on rate-limit errors."""
     last_exc: Exception = RuntimeError("No models available")
     for model in _MODELS:
@@ -77,7 +77,7 @@ async def _call(prompt: str) -> str:
             resp = await get_client().chat.completions.create(
                 model=model,
                 messages=[
-                    {"role": "system", "content": SYSTEM},
+                    {"role": "system", "content": system},
                     {"role": "user",   "content": prompt},
                 ],
                 temperature=0.1,
@@ -837,6 +837,11 @@ Return ONLY the summary text — no JSON, no headers."""
 # Stage 7 — Pre-Bid Q&A Extraction
 # ---------------------------------------------------------------------------
 
+_QA_SYSTEM = (
+    "You are a document parser that extracts question-and-answer pairs from pre-bid clarification documents. "
+    "Return only valid JSON arrays. Never fabricate data — if content is absent, return []."
+)
+
 async def stage_extract_prebid_qa(prebid_text: str) -> list:
     """Extract structured Q&A pairs from a pre-bid clarification document."""
     prompt = (
@@ -849,7 +854,7 @@ async def stage_extract_prebid_qa(prebid_text: str) -> list:
         "If no clear Q&A pairs are found, return an empty array: []"
     )
     try:
-        items = _parse_array(await _call(prompt))
+        items = _parse_array(await _call(prompt, system=_QA_SYSTEM))
         return [PrebidQA(**item) for item in items if isinstance(item, dict) and "question" in item and "answer" in item]
     except Exception:
         return []
