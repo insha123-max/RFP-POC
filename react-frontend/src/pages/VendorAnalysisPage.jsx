@@ -213,7 +213,9 @@ export default function VendorAnalysisPage() {
             { label: 'Overall Score', value: score, unit: '', sub: report.passed ? 'PASSED' : 'FAILED', color: report.passed ? '#22C55E' : '#EF4444' },
             { label: 'Total Marks',  value: `${report.total_score}/${report.max_score}`, unit: '', sub: 'Weighted', color: '#6366F1' },
             { label: 'Met Criteria', value: metCount, unit: '', sub: 'Fully satisfied', color: '#22C55E' },
-            { label: 'Gaps Found',   value: missCount, unit: '', sub: 'Not met', color: '#F59E0B' },
+            missCount === 0
+              ? { label: 'Gaps Found', value: '✓', unit: '', sub: 'No gaps', color: '#22C55E' }
+              : { label: 'Gaps Found', value: missCount, unit: '', sub: 'Not met', color: '#F59E0B' },
           ].map(k => (
             <div key={k.label}>
               <div style={{ fontSize: '0.72rem', color: '#94A3B8', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 4 }}>{k.label}</div>
@@ -295,8 +297,8 @@ export default function VendorAnalysisPage() {
         </div>
       )}
 
-      {/* Risk Assessment */}
-      {report.risk_items.length > 0 && (
+      {/* Risk Assessment — only shown when there are actual risk items AND there are unmet criteria */}
+      {report.risk_items.length > 0 && missCount > 0 && (
         <div className="card" style={{ padding: '1.5rem' }}>
           <div className="card-title">Risk Assessment</div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: '1rem' }}>

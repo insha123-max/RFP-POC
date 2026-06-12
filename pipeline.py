@@ -874,7 +874,15 @@ async def _run_pipeline(
     )
     passed = not disqualified and not category_fail and total_score >= threshold
 
-    risk_items        = await stage5_gap_analysis(criteria_evals)
+    # If the score is 100% (overall score meets or exceeds max_score, or all criteria scored 100%), no gaps/risks are shown.
+    is_perfect = (total_score >= max_score) or (
+        len(criteria_evals) > 0 and all(ce.marks_awarded >= ce.max_marks for ce in criteria_evals if ce.max_marks > 0)
+    )
+    if is_perfect:
+        risk_items = []
+    else:
+        risk_items = await stage5_gap_analysis(criteria_evals)
+
     executive_summary = await stage6_executive_summary(
         total_score, max_score, passed, category_results
     )

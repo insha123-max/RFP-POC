@@ -619,16 +619,15 @@ export default function ActiveEvaluationPage() {
         </div>
       )}
 
-      {/* Risk & Gap Analysis */}
-      <div className="card" style={{ padding: '1.5rem' }}>
-        <div className="card-title">Risk &amp; Gap Analysis</div>
-        {risks.length === 0
-          ? <div style={{ color: '#6B7280', fontSize: '0.875rem' }}>No risks identified.</div>
-          : <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: '1rem' }}>
-              {risks.map((r, i) => <RiskItem key={i} {...r} />)}
-            </div>
-        }
-      </div>
+      {/* Risk & Gap Analysis — only shown when there are actual risks/gaps AND score is not perfect */}
+      {risks.length > 0 && score < 100 && (
+        <div className="card" style={{ padding: '1.5rem' }}>
+          <div className="card-title">Risk &amp; Gap Analysis</div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: '1rem' }}>
+            {risks.map((r, i) => <RiskItem key={i} {...r} />)}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

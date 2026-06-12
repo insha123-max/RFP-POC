@@ -235,6 +235,14 @@ async def apply_override(request: OverrideRequest):
         and report.total_score >= report.threshold
     )
 
+    # If the score is 100% after overrides (overall score meets or exceeds max_score, or all criteria achieved 100%), clear risk items.
+    all_criteria = [ce for cr in report.category_results for ce in cr.criteria]
+    is_perfect = (report.total_score >= report.max_score) or (
+        len(all_criteria) > 0 and all(ce.marks_awarded >= ce.max_marks for ce in all_criteria if ce.max_marks > 0)
+    )
+    if is_perfect:
+        report.risk_items = []
+
     return report
 
 
