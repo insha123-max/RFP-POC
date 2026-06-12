@@ -40,6 +40,11 @@ export function EvaluationProvider({ children }) {
     })
   }
 
+  const clearAllHistory = () => {
+    setHistory([])
+    localStorage.removeItem('eval_history')
+  }
+
   const setCurrentEvaluation = entry => {
     setReport(entry.report)
     setRfpName(entry.rfpName)
@@ -47,7 +52,7 @@ export function EvaluationProvider({ children }) {
   }
 
   return (
-    <Ctx.Provider value={{ report, setReport, rfpName, setRfpName, bidName, setBidName, history, addToHistory, deleteFromHistory, setCurrentEvaluation }}>
+    <Ctx.Provider value={{ report, setReport, rfpName, setRfpName, bidName, setBidName, history, addToHistory, deleteFromHistory, clearAllHistory, setCurrentEvaluation }}>
       {children}
     </Ctx.Provider>
   )

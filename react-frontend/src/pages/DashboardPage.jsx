@@ -154,7 +154,7 @@ function EmptyState({ onStart }) {
 /* ── Main Page ───────────────────────────────────────────────────────────── */
 export default function DashboardPage() {
   const navigate = useNavigate()
-  const { history, setCurrentEvaluation, deleteFromHistory } = useEvaluation()
+  const { history, setCurrentEvaluation, deleteFromHistory, clearAllHistory } = useEvaluation()
 
   const totalEvals = history.length
   const passCount  = history.filter(e => e.passed).length
@@ -164,6 +164,7 @@ export default function DashboardPage() {
 
   const PAGE_SIZE  = 5
   const [page, setPage] = useState(0)
+  const [confirmDeleteAll, setConfirmDeleteAll] = useState(false)
   const totalPages = Math.ceil(history.length / PAGE_SIZE)
 
   const latest  = history[0]
@@ -228,9 +229,30 @@ export default function DashboardPage() {
             <div className="card" style={{ padding: '1.5rem' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
                 <div className="card-title" style={{ marginBottom: 0 }}>Recent Evaluations</div>
-                <button className="btn-ghost" style={{ fontSize: '0.8rem', color: '#6366F1', fontWeight: 600 }} onClick={() => navigate('/evaluate')}>
-                  + New Evaluation
-                </button>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                  {history.length > 0 && (
+                    confirmDeleteAll ? (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <span style={{ fontSize: '0.75rem', color: '#6B7280' }}>Delete all?</span>
+                        <button
+                          style={{ fontSize: '0.75rem', fontWeight: 600, color: '#fff', background: '#EF4444', border: 'none', borderRadius: 6, padding: '3px 10px', cursor: 'pointer' }}
+                          onClick={() => { clearAllHistory(); setConfirmDeleteAll(false); setPage(0) }}
+                        >Confirm</button>
+                        <button
+                          style={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', background: '#F3F4F6', border: 'none', borderRadius: 6, padding: '3px 10px', cursor: 'pointer' }}
+                          onClick={() => setConfirmDeleteAll(false)}
+                        >Cancel</button>
+                      </div>
+                    ) : (
+                      <button className="btn-ghost" style={{ fontSize: '0.8rem', color: '#EF4444', fontWeight: 600 }} onClick={() => setConfirmDeleteAll(true)}>
+                        Delete All
+                      </button>
+                    )
+                  )}
+                  <button className="btn-ghost" style={{ fontSize: '0.8rem', color: '#6366F1', fontWeight: 600 }} onClick={() => navigate('/evaluate')}>
+                    + New Evaluation
+                  </button>
+                </div>
               </div>
               {recent.map(entry => (
                 <EvalCard
