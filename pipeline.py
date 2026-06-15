@@ -370,6 +370,37 @@ def _rfp_extract_prompt(chunk: str) -> str:
     )
 
 
+def _rfp_pqtq_prompt(chunk: str) -> str:
+    return (
+        f"You are reading a tender/RFP document section. Your task is to extract ONLY the "
+        f"Pre-Qualification (PQ) and Technical Qualification (TQ) scoring criteria.\n\n"
+        f"{chunk}\n\n"
+        f"SCOPE RESTRICTION — most important filter:\n"
+        f"  Extract ONLY criteria from sections named or closely matching:\n"
+        f"  - Pre-Qualification, Pre Qualification, PQ, Eligibility Criteria\n"
+        f"  - Technical Qualification, Technical Evaluation, TQ, Technical Criteria\n"
+        f"  - Experience, Manpower/Team, Technical Capacity, Past Performance\n"
+        f"  IGNORE and DO NOT extract criteria from: Financial Bid, Commercial Evaluation, "
+        f"Price, Cost, Turnover, Bank Guarantee, EMD, Document Submission checklists, "
+        f"or any section not related to technical or pre-qualification standing.\n\n"
+        f"STRICT RULES:\n\n"
+        f"RULE 0 — THE MOST IMPORTANT RULE:\n"
+        f"  Set rules_found=false and return EMPTY scoring_categories if no explicit numeric "
+        f"marks/points/scores/weightage are attached to PQ/TQ criteria. "
+        f"Do NOT invent, guess, or assume any marks.\n\n"
+        f"RULE 1: Do NOT group categories under a single parent. Each scoring category is independent.\n"
+        f"RULE 2: subcriteria must be a FLAT list — no nesting.\n"
+        f"RULE 3: Preserve exact criterion names and prefixes as they appear in the document.\n"
+        f"RULE 4: Set mandatory=true only when the document explicitly says mandatory/compulsory/must-meet.\n\n"
+        f"Return ONLY JSON:\n"
+        f'{{"rules_found":true,"scoring_categories":[{{"category":"Category Name","max_marks":70,"weight_percent":70,'
+        f'"subcriteria":[{{"criterion":"Sub-Criterion Name","max_marks":20,"mandatory":false}}]}}],'
+        f'"threshold":{{"overall_pass_mark":70,"category_minimums":[]}},"mandatory_disqualifiers":[]}}\n\n'
+        f"If no explicit numeric marks exist for PQ/TQ criteria in this text: "
+        f'return exactly {{"rules_found":false,"scoring_categories":[],"threshold":{{"overall_pass_mark":0,"category_minimums":[]}},"mandatory_disqualifiers":[]}}'
+    )
+
+
 def _normalize_disqualifiers(raw) -> list:
     if not isinstance(raw, list):
         return []
@@ -585,6 +616,177 @@ async def stage2_extract_rules(rfp_text: str) -> EvaluationRules:
     )
 
     # Force rules_found=False if no categories were successfully extracted
+    rules_extracted = any_explicit_rules and len(all_cats) > 0
+
+    return EvaluationRules(
+        rules_found=rules_extracted,
+        scoring_categories=categories,
+        threshold=threshold,
+        mandatory_disqualifiers=all_disq,
+    )
+
+
+async def stage2_extract_pqtq_rules(rfp_text: str) -> EvaluationRules:
+    """Like stage2_extract_rules but scoped to PQ/TQ criteria only."""
+    keyword_text = _extract_scoring_sections(rfp_text, MAX_RFP_CHARS)
+    chunks = [keyword_text]
+    scoring_start = _find_scoring_section_start(rfp_text)
+    if scoring_start >= 0:
+        for i in range(1, 3):
+            chunk_start = scoring_start + i * MAX_RFP_CHARS
+            if chunk_start < len(rfp_text):
+                chunks.append(rfp_text[chunk_start: chunk_start + MAX_RFP_CHARS])
+    else:
+        for start in range(0, min(len(rfp_text), MAX_RFP_CHARS * 3), MAX_RFP_CHARS):
+            chunks.append(rfp_text[start: start + MAX_RFP_CHARS])
+
+    chunks = [c for c in chunks if c.strip()][:4]
+
+    all_cats: dict[str, dict] = {}
+    all_disq: list[str] = []
+    pass_mark = 0.0
+    cat_mins: dict[str, dict] = {}
+    any_explicit_rules = False
+
+    for chunk in chunks:
+        try:
+            data = _parse_object(await _call(_rfp_pqtq_prompt(chunk)))
+
+            chunk_has_rules = bool(data.get("rules_found", False))
+            if chunk_has_rules:
+                any_explicit_rules = True
+            else:
+                print(f"[Stage2-PQTQ chunk] rules_found=false — skipping fabricated categories")
+                disqs = data.get("mandatory_disqualifiers", [])
+                for d in _normalize_disqualifiers(disqs):
+                    if d not in all_disq:
+                        all_disq.append(d)
+                continue
+
+            scoring_categories = data.get("scoring_categories", [])
+            if not isinstance(scoring_categories, list):
+                scoring_categories = []
+            for cat in scoring_categories:
+                if not isinstance(cat, dict):
+                    continue
+                key = cat.get("category", "")
+                if not isinstance(key, str):
+                    key = str(key)
+                key = key.strip().lower()
+                if not key:
+                    continue
+                if key not in all_cats:
+                    all_cats[key] = {**cat}
+                else:
+                    subs = all_cats[key].get("subcriteria", [])
+                    if not isinstance(subs, list):
+                        subs = []
+                    exist_subs = {s["criterion"].lower() for s in subs if isinstance(s, dict) and "criterion" in s}
+                    cat_subs = cat.get("subcriteria", [])
+                    if not isinstance(cat_subs, list):
+                        cat_subs = []
+                    for sub in cat_subs:
+                        if isinstance(sub, dict) and sub.get("criterion", "").lower() not in exist_subs:
+                            all_cats[key].setdefault("subcriteria", []).append(sub)
+
+            disqs = data.get("mandatory_disqualifiers", [])
+            for d in _normalize_disqualifiers(disqs):
+                if d not in all_disq:
+                    all_disq.append(d)
+
+            thresh = data.get("threshold", {})
+            if not isinstance(thresh, dict):
+                thresh = {}
+
+            pm = 0.0
+            overall_pm = thresh.get("overall_pass_mark", 0.0)
+            if isinstance(overall_pm, (int, float)):
+                pm = float(overall_pm)
+            elif isinstance(overall_pm, str):
+                try:
+                    pm = float(overall_pm)
+                except ValueError:
+                    pm = 0.0
+            if pm > pass_mark:
+                pass_mark = pm
+
+            cat_mins_list = thresh.get("category_minimums", [])
+            if not isinstance(cat_mins_list, list):
+                cat_mins_list = []
+            for cm in cat_mins_list:
+                if isinstance(cm, dict) and "category" in cm:
+                    cat_mins[cm.get("category", "").lower()] = cm
+        except Exception as e:
+            print(f"[Stage2-PQTQ chunk] error: {e}")
+            continue
+
+    raw_cats = []
+    for cat in all_cats.values():
+        mm = float(cat.get("max_marks") or 0)
+        wp = float(cat.get("weight_percent") or 0)
+        subs = cat.get("subcriteria", [])
+        if not isinstance(subs, list):
+            subs = []
+        if mm == 0 and subs:
+            mm = sum(float(s.get("max_marks") or 0) for s in subs if isinstance(s, dict))
+        if wp == 0:
+            wp = mm
+        if mm > 0:
+            raw_cats.append((cat, mm, wp))
+
+    total_w = sum(w for _, _, w in raw_cats)
+    if total_w > 0:
+        raw_cats = [(c, m, round(w / total_w * 100, 2)) for c, m, w in raw_cats]
+
+    categories = []
+    for c, m, w in raw_cats:
+        subs = c.get("subcriteria", [])
+        if not isinstance(subs, list):
+            subs = []
+        subcriteria_list = []
+        for s in subs:
+            if not s:
+                continue
+            if isinstance(s, dict):
+                crit_name = s.get("criterion", "Criterion")
+                max_m = float(s.get("max_marks") or 0)
+                mand = bool(s.get("mandatory", False))
+                subcriteria_list.append(SubCriterion(criterion=crit_name, max_marks=max_m, mandatory=mand))
+            else:
+                subcriteria_list.append(SubCriterion(criterion=str(s), max_marks=0))
+        categories.append(
+            ScoringCategory(
+                category=c.get("category", "Category"),
+                max_marks=m,
+                weight_percent=w,
+                subcriteria=subcriteria_list,
+            )
+        )
+
+    for cat in categories:
+        sub_numbers = set()
+        for s in cat.subcriteria:
+            m = re.match(r'(?:Sub-Criterion|Sub-criterion|Sub_Criterion|Sub\s+Criterion)\s+(\d+)\b', s.criterion, re.IGNORECASE)
+            if m:
+                sub_numbers.add(m.group(1))
+        filtered = []
+        for s in cat.subcriteria:
+            m = re.match(r'^Criterion\s+(\d+)\b', s.criterion, re.IGNORECASE)
+            if m and m.group(1) in sub_numbers:
+                print(f"[Stage2-PQTQ] Filtering out parent criterion '{s.criterion}'")
+                continue
+            filtered.append(s)
+        cat.subcriteria = filtered
+
+    threshold = Threshold(
+        overall_pass_mark=pass_mark,
+        category_minimums=[
+            CategoryMinimum(category=cm.get("category", ""), minimum_percent=float(cm.get("minimum_percent") or 0))
+            for cm in cat_mins.values()
+            if isinstance(cm, dict)
+        ],
+    )
+
     rules_extracted = any_explicit_rules and len(all_cats) > 0
 
     return EvaluationRules(
@@ -1095,3 +1297,15 @@ async def run_full_evaluation(rfp_text: str, bid_text: str, prebid_text: str = "
 async def run_evaluation_with_rules(bid_text: str, rules: EvaluationRules) -> EvaluationReport:
     """Run evaluation stages 3-6 using caller-supplied rules (no RFP needed)."""
     return await _run_pipeline(bid_text, rules)
+
+
+async def run_pqtq_evaluation(rfp_text: str, bid_text: str) -> EvaluationReport:
+    """Run evaluation scoped to Pre-Qualification / Technical Qualification criteria only."""
+    if not _rfp_has_explicit_marks(rfp_text):
+        print("[Pipeline-PQTQ] No explicit scoring marks found in RFP — raising NO_RULES_FOUND")
+        raise ValueError("NO_RULES_FOUND")
+    rules = await stage2_extract_pqtq_rules(rfp_text)
+    if not rules.rules_found:
+        raise ValueError("NO_RULES_FOUND")
+    rfp_scoring_text = _extract_scoring_sections(rfp_text, MAX_RFP_CHARS)
+    return await _run_pipeline(bid_text, rules, rfp_scoring_text)

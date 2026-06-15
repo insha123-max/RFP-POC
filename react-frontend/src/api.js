@@ -27,6 +27,19 @@ export async function runCustomEvaluation(bidFiles, criteriaData) {
   return res.json()
 }
 
+export async function runPQTQEvaluation(rfpFile, bidFiles) {
+  const form = new FormData()
+  form.append('rfp_file', rfpFile)
+  const files = Array.isArray(bidFiles) ? bidFiles : [bidFiles]
+  files.forEach(f => form.append('bid_files', f))
+  const res = await fetch(`${BASE}/evaluate-pqtq`, { method: 'POST', body: form })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(err.detail || 'PQTQ Evaluation failed')
+  }
+  return res.json()
+}
+
 export async function applyOverride(report, overrides) {
   const res = await fetch(`${BASE}/override`, {
     method: 'POST',

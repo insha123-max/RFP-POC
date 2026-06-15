@@ -7,6 +7,7 @@ import ActiveEvaluationPage from './pages/ActiveEvaluationPage'
 import VendorAnalysisPage   from './pages/VendorAnalysisPage'
 import ExecutiveReportPage  from './pages/ExecutiveReportPage'
 import AnalyticsPage        from './pages/AnalyticsPage'
+import PQTQEvaluatePage     from './pages/PQTQEvaluatePage'
 
 export default function App() {
   return (
@@ -17,6 +18,7 @@ export default function App() {
           <Routes>
             <Route path="/"                  element={<DashboardPage />} />
             <Route path="/evaluate"          element={<EvaluatePage />} />
+            <Route path="/pqtq-evaluation"   element={<PQTQEvaluatePage />} />
             <Route path="/active-evaluation" element={<ActiveEvaluationPage />} />
             <Route path="/vendor-analysis"   element={<VendorAnalysisPage />} />
             <Route path="/executive-report"  element={<ExecutiveReportPage />} />

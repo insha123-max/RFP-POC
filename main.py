@@ -21,7 +21,7 @@ from models import (
     SubCriterion,
     Threshold,
 )
-from pipeline import run_evaluation_with_rules, run_full_evaluation
+from pipeline import run_evaluation_with_rules, run_full_evaluation, run_pqtq_evaluation
 
 load_dotenv()
 
@@ -176,6 +176,54 @@ async def evaluate_custom(
     try:
         report = await run_evaluation_with_rules(combined_bid_text, rules)
         return report
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Evaluation failed: {exc}")
+
+
+@app.post("/api/evaluate-pqtq", response_model=EvaluationReport)
+async def evaluate_pqtq(
+    rfp_file: UploadFile = File(..., description="RFP / Tender document"),
+    bid_files: List[UploadFile] = File(..., description="Vendor bid / response documents"),
+):
+    rfp_bytes = await rfp_file.read()
+    rfp_text, rfp_err = extract_text(rfp_file.filename or "rfp.pdf", rfp_bytes)
+    if rfp_err:
+        raise HTTPException(status_code=400, detail=f"RFP document error: {rfp_err}")
+
+    bid_parts = []
+    for i, bid_file in enumerate(bid_files):
+        bid_bytes = await bid_file.read()
+        bid_text, bid_err = extract_text(bid_file.filename or f"bid_{i+1}.pdf", bid_bytes)
+        if bid_err:
+            raise HTTPException(status_code=400, detail=f"Bid document '{bid_file.filename}' error: {bid_err}")
+        header = f"=== BID DOCUMENT {i+1}: {bid_file.filename} ===" if len(bid_files) > 1 else ""
+        bid_parts.append(f"{header}\n{bid_text}".strip())
+    combined_bid_text = "\n\n".join(bid_parts)
+
+    try:
+        report = await run_pqtq_evaluation(rfp_text, combined_bid_text)
+        return report
+    except ValueError as exc:
+        if str(exc) == "NO_RULES_FOUND":
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "NO_RULES_FOUND: No Pre-Qualification or Technical Qualification scoring "
+                    "criteria with explicit numeric marks were found in this RFP."
+                ),
+            )
+        raise HTTPException(status_code=500, detail=str(exc))
+    except RuntimeError as exc:
+        msg = str(exc)
+        if "rate-limited" in msg or "All Groq" in msg:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "The AI service is temporarily unavailable due to rate limits. "
+                    "Please wait 1–2 minutes and try again."
+                ),
+            )
+        raise HTTPException(status_code=500, detail=f"Evaluation failed: {exc}")
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Evaluation failed: {exc}")
 
