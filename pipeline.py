@@ -1052,6 +1052,26 @@ async def _run_pipeline(
     )
 
 
+def _rfp_has_explicit_marks(text: str) -> bool:
+    """Return True only when the RFP text contains explicit numeric scoring marks.
+
+    Patterns like '20 marks', '10 points', 'max marks: 30' must be present.
+    A section heading like 'Evaluation Criteria' without numbers is NOT enough.
+    """
+    patterns = [
+        r'\b\d+\s*(?:marks?|points?|pts)\b',
+        r'\b(?:max(?:imum)?|total)\s+marks?\s*[:=\-]\s*\d+',
+        r'\bweightage\s*[:=\-]\s*\d+',
+        r'\b\d+\s*(?:marks?|points?)\s*(?:each|total|max|out\s+of)',
+        r'\bmax(?:imum)?\s*:\s*\d+',
+        r'\bout\s+of\s+\d+\s+marks?\b',
+    ]
+    for pat in patterns:
+        if re.search(pat, text, re.I):
+            return True
+    return False
+
+
 async def run_full_evaluation(rfp_text: str, bid_text: str, prebid_text: str = "") -> EvaluationReport:
     prebid_applied = bool(prebid_text.strip())
     if prebid_applied:
@@ -1060,6 +1080,11 @@ async def run_full_evaluation(rfp_text: str, bid_text: str, prebid_text: str = "
             + "\n\n=== PRE-BID CLARIFICATIONS (take precedence over original criteria above) ===\n\n"
             + prebid_text.strip()
         )
+    # Fast text-level guard: if the RFP has no explicit numeric marks at all,
+    # skip the expensive LLM stage2 call and go straight to custom-rules flow.
+    if not _rfp_has_explicit_marks(rfp_text):
+        print("[Pipeline] No explicit scoring marks found in RFP text — raising NO_RULES_FOUND without LLM call")
+        raise ValueError("NO_RULES_FOUND")
     rules = await stage2_extract_rules(rfp_text)
     if not rules.rules_found:
         raise ValueError("NO_RULES_FOUND")
