@@ -383,19 +383,23 @@ def _normalize_disqualifiers(raw) -> list:
 
 
 async def stage2_extract_rules(rfp_text: str) -> EvaluationRules:
-    # Build 3 chunks: keyword-filtered + raw sequential chunks
     keyword_text = _extract_scoring_sections(rfp_text, MAX_RFP_CHARS)
     chunks = [keyword_text]
-    # For large documents where an anchor was found, `keyword_text` already targets
-    # the exact scoring section — additional sequential chunks would bleed into
-    # pre-bid Q&A tables that repeat old scoring formulas and look like new categories.
-    # For small documents (no anchor found) fall back to sequential chunks from the start.
     scoring_start = _find_scoring_section_start(rfp_text)
-    if scoring_start < 0:
+    if scoring_start >= 0:
+        # Anchor found: continue sequentially from that same offset so criteria
+        # that span beyond the first MAX_RFP_CHARS window are captured without
+        # bleeding into pre-bid Q&A at the document start.
+        for i in range(1, 3):
+            chunk_start = scoring_start + i * MAX_RFP_CHARS
+            if chunk_start < len(rfp_text):
+                chunks.append(rfp_text[chunk_start: chunk_start + MAX_RFP_CHARS])
+    else:
+        # No anchor — fall back to sequential chunks from the document start.
         for start in range(0, min(len(rfp_text), MAX_RFP_CHARS * 3), MAX_RFP_CHARS):
             chunks.append(rfp_text[start: start + MAX_RFP_CHARS])
 
-    chunks = [c for c in chunks if c.strip()][:4]  # at most 4 calls
+    chunks = [c for c in chunks if c.strip()][:4]  # at most 4 LLM calls
 
     # Merge categories from all chunks
     all_cats: dict[str, dict] = {}
@@ -743,10 +747,12 @@ def stage4_calculate_scores(
     rules: EvaluationRules,
 ) -> List[CategoryResult]:
     # First pass: resolve per-category minimum from RFP.
-    # Tracks the *source* so the UI can distinguish an explicit category rule from the
-    # blanket overall pass mark being used as a fallback.
+    # Only EXPLICIT per-category minimums go into cat_min_map.
+    # overall_pass_mark is used in the second pass for per-criterion labels only —
+    # it must NOT go into cat_min_map because that would force every category to
+    # require 70% individually, which is far stricter than the RFP intends.
     overall_min = rules.threshold.overall_pass_mark or 0.0
-    cat_min_map: dict = {}  # category -> (min_pct, source) where source is "category"|"overall"|None
+    cat_min_map: dict = {}  # category -> (min_pct, source) — source is "category" only
     for cat in rules.scoring_categories:
         min_pct: Optional[float] = None
         source: Optional[str] = None
@@ -755,9 +761,6 @@ def stage4_calculate_scores(
                 min_pct = cm.minimum_percent
                 source = "category"
                 break
-        if min_pct is None and overall_min > 0:
-            min_pct = overall_min
-            source = "overall"
         cat_min_map[cat.category] = (min_pct, source)
 
     # Second pass: fix marks then set compliance status + threshold_logic per criterion.
@@ -771,13 +774,18 @@ def stage4_calculate_scores(
         min_pct, source = cat_min_map.get(ce.category, (None, None))
         if ce.max_marks > 0:
             if min_pct is not None:
+                # Explicit per-category RFP minimum
                 threshold = ce.max_marks * (min_pct / 100)
                 ce.compliance_status = "Met" if ce.marks_awarded >= threshold else "Not Met"
-                if source == "category":
-                    ce.threshold_logic = f"RFP Category Min ({min_pct}%)"
-                else:
-                    ce.threshold_logic = f"Overall Min Fallback ({min_pct}%)"
+                ce.threshold_logic = f"RFP Category Min ({min_pct}%)"
+            elif overall_min > 0:
+                # No explicit category rule — apply overall pass mark for display only.
+                # This does NOT affect per-category pass/fail (cat_min_map has no overall_min).
+                threshold = ce.max_marks * (overall_min / 100)
+                ce.compliance_status = "Met" if ce.marks_awarded >= threshold else "Not Met"
+                ce.threshold_logic = f"Overall Min Fallback ({overall_min}%)"
             else:
+                # No RFP pass mark at all
                 ce.compliance_status = "Met" if ce.marks_awarded > ce.max_marks / 2 else "Not Met"
                 ce.threshold_logic = "50% Fallback"
         else:

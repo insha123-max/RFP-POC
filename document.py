@@ -10,9 +10,25 @@ def extract_text_from_pdf(file_bytes: bytes) -> str:
     pages = []
     with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
         for i, page in enumerate(pdf.pages):
+            page_parts = []
+
+            # Extract tables first — preserves scoring matrices where criterion names
+            # and mark values sit in adjacent cells (extract_text() loses this structure).
+            for table in page.extract_tables():
+                for row in table:
+                    if row:
+                        cells = [str(c or "").strip() for c in row]
+                        non_empty = [c for c in cells if c]
+                        if len(non_empty) >= 2:
+                            page_parts.append(" | ".join(non_empty))
+
+            # Append flowing text (may overlap with table content, but LLM handles duplication)
             text = page.extract_text()
             if text and text.strip():
-                pages.append(f"[Page {i + 1}]\n{text.strip()}")
+                page_parts.append(text.strip())
+
+            if page_parts:
+                pages.append(f"[Page {i + 1}]\n" + "\n".join(page_parts))
     return "\n\n".join(pages)
 
 
