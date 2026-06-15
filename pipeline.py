@@ -691,7 +691,22 @@ async def stage3_parse_vendor_response(
             if rfp_scoring_text and not is_future_event else ""
         )
 
-        prompt = f"""Evaluate the vendor bid for the "{cat.category}" category.
+        if is_generic:
+            prompt = f"""Evaluate the vendor bid for the "{cat.category}" category (total: {cat.max_marks} marks).
+
+VENDOR BID:
+{relevant_bid}
+{rfp_context}
+No specific subcriteria are defined in the RFP for this category.
+Identify 3 to 5 specific evaluation aspects relevant to a "{cat.category}" proposal and evaluate each one against the vendor bid.
+Distribute {cat.max_marks} marks proportionally across the aspects (sum of max_marks must equal {cat.max_marks}).
+
+{scoring_instruction}
+
+Return ONLY a JSON array with 3-5 items (one per aspect):
+[{{"criterion":"<specific aspect name>","category":"{cat.category}","max_marks":<proportional_max>,"marks_awarded":<actual_marks>,"vendor_claim":"<quote or Not found>","source_reference":"<section or Not found>","compliance_status":"Met|Partial|Not Met","confidence":"High|Medium|Low","justification":"<one sentence>","is_mandatory":false}}]"""
+        else:
+            prompt = f"""Evaluate the vendor bid for the "{cat.category}" category.
 
 VENDOR BID:
 {relevant_bid}
