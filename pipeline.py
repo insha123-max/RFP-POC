@@ -27,18 +27,16 @@ from models import (
 load_dotenv()
 
 # Model fallback list — tried in order when rate-limited or decommissioned.
-# Groq free-tier daily limits (approx):
-#   llama-3.1-8b-instant       500K TPD,  6K TPM   — primary (highest quota)
-#   llama-3.3-70b-versatile    100K TPD, 12K TPM   — best quality
-#   gemma2-9b-it               500K TPD, 15K TPM   — Google Gemma, large quota
-#   llama-3.1-70b-versatile    100K TPD,  6K TPM   — additional 70B pool
-#   llama-3.2-3b-preview      14.4K TPD, 15K TPM   — small fast model
+# Only include models confirmed active on Groq (decommissioned models removed June 2026):
+#   llama-3.1-70b-versatile   — DECOMMISSIONED (400)
+#   gemma2-9b-it              — DECOMMISSIONED (400)
+#   llama-3.2-3b-preview      — DECOMMISSIONED (400)
 _MODELS = [
-    "llama-3.3-70b-versatile",   # best reasoning — use first
-    "llama-3.1-70b-versatile",   # second 70B pool
-    "gemma2-9b-it",              # fallback
-    "llama-3.1-8b-instant",      # last resort — weak at math
-    "llama-3.2-3b-preview",
+    "llama-3.3-70b-versatile",                        # best reasoning — use first
+    "meta-llama/llama-4-scout-17b-16e-instruct",      # newer Llama 4, larger quota
+    "meta-llama/llama-4-maverick-17b-128e-instruct",  # secondary Llama 4
+    "qwen-qwq-32b",                                   # additional fallback
+    "llama-3.1-8b-instant",                           # last resort — high quota, smaller
 ]
 MODEL_NAME = _MODELS[0]
 
@@ -70,34 +68,51 @@ def get_client() -> AsyncGroq:
 
 
 async def _call(prompt: str, system: str = SYSTEM) -> str:
-    """Try each model in _MODELS; fall back to next on rate-limit errors."""
+    """Try each model in _MODELS; fall back to next on rate-limit or decommission errors.
+
+    Rate-limited models get one retry with exponential backoff before moving on.
+    Decommissioned models are skipped immediately (no retry — they will never recover).
+    """
     last_exc: Exception = RuntimeError("No models available")
     for model in _MODELS:
-        try:
-            resp = await get_client().chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": system},
-                    {"role": "user",   "content": prompt},
-                ],
-                temperature=0.1,
-                max_tokens=2048,
-            )
-            return resp.choices[0].message.content
-        except Exception as exc:
-            err = str(exc)
-            # Skip to next model on: rate limits (429) OR decommissioned models (400)
-            is_rate_limit    = "429" in err or "rate" in err.lower() or "quota" in err.lower()
-            is_decommissioned = "decommission" in err.lower() or "deprecated" in err.lower() or "no longer supported" in err.lower()
-            if is_rate_limit or is_decommissioned:
-                reason = "decommissioned" if is_decommissioned else "rate-limited"
-                print(f"[_call] {model} {reason}, trying next model. Error: {err[:160]}")
-                last_exc = exc
+        for attempt in range(2):  # up to 2 attempts per model (for rate limits)
+            try:
+                resp = await get_client().chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user",   "content": prompt},
+                    ],
+                    temperature=0.1,
+                    max_tokens=2048,
+                )
+                return resp.choices[0].message.content
+            except Exception as exc:
+                err = str(exc)
+                is_rate_limit     = "429" in err or "rate" in err.lower() or "quota" in err.lower()
+                is_decommissioned = "decommission" in err.lower() or "deprecated" in err.lower() or "no longer supported" in err.lower()
+
+                if is_decommissioned:
+                    print(f"[_call] {model} decommissioned, skipping. Error: {err[:160]}")
+                    last_exc = exc
+                    break  # no retry — move to next model immediately
+
                 if is_rate_limit:
-                    await asyncio.sleep(2)
-                continue
-            raise   # other errors (auth, network, etc.) — raise immediately
-    # All models exhausted — wait a moment and raise a clear error
+                    last_exc = exc
+                    if attempt == 0:
+                        wait = 2 ** (attempt + 1)  # 2s first retry
+                        print(f"[_call] {model} rate-limited, retrying in {wait}s. Error: {err[:160]}")
+                        await asyncio.sleep(wait)
+                        # loop continues for attempt=1
+                    else:
+                        # Second attempt also failed — move to next model
+                        print(f"[_call] {model} rate-limited again, trying next model.")
+                        break
+
+                else:
+                    raise  # auth, network, or unexpected errors — bubble up immediately
+
+    # All models exhausted
     raise RuntimeError(
         "All Groq models are currently rate-limited. "
         "Please wait a few minutes and try again, or check https://console.groq.com "
@@ -561,6 +576,7 @@ async def stage2_extract_rules(rfp_text: str) -> EvaluationRules:
         category_minimums=[
             CategoryMinimum(category=cm.get("category", ""), minimum_percent=float(cm.get("minimum_percent") or 0))
             for cm in cat_mins.values()
+            if isinstance(cm, dict)
         ],
     )
 
@@ -726,19 +742,23 @@ def stage4_calculate_scores(
     criteria_evals: List[CriterionEvaluation],
     rules: EvaluationRules,
 ) -> List[CategoryResult]:
-    # First pass: resolve per-category minimum from RFP (category-specific or overall pass mark).
-    # Both count as "RFP Minimum" logic; only absence of any RFP minimum triggers 50% fallback.
+    # First pass: resolve per-category minimum from RFP.
+    # Tracks the *source* so the UI can distinguish an explicit category rule from the
+    # blanket overall pass mark being used as a fallback.
     overall_min = rules.threshold.overall_pass_mark or 0.0
-    cat_min_map: dict = {}  # category -> min_pct (float | None)
+    cat_min_map: dict = {}  # category -> (min_pct, source) where source is "category"|"overall"|None
     for cat in rules.scoring_categories:
         min_pct: Optional[float] = None
+        source: Optional[str] = None
         for cm in rules.threshold.category_minimums:
             if cm.category == cat.category and cm.minimum_percent > 0:
                 min_pct = cm.minimum_percent
+                source = "category"
                 break
         if min_pct is None and overall_min > 0:
             min_pct = overall_min
-        cat_min_map[cat.category] = min_pct
+            source = "overall"
+        cat_min_map[cat.category] = (min_pct, source)
 
     # Second pass: fix marks then set compliance status + threshold_logic per criterion.
     for ce in criteria_evals:
@@ -748,15 +768,16 @@ def stage4_calculate_scores(
         # Clamp to valid range
         ce.marks_awarded = max(0.0, min(ce.marks_awarded, ce.max_marks))
 
-        min_pct = cat_min_map.get(ce.category)
+        min_pct, source = cat_min_map.get(ce.category, (None, None))
         if ce.max_marks > 0:
             if min_pct is not None:
-                # RFP specifies a minimum — use it as the per-criterion threshold
                 threshold = ce.max_marks * (min_pct / 100)
                 ce.compliance_status = "Met" if ce.marks_awarded >= threshold else "Not Met"
-                ce.threshold_logic = f"RFP Min ({min_pct}%)"
+                if source == "category":
+                    ce.threshold_logic = f"RFP Category Min ({min_pct}%)"
+                else:
+                    ce.threshold_logic = f"Overall Min Fallback ({min_pct}%)"
             else:
-                # No RFP minimum — fall back to 50% rule
                 ce.compliance_status = "Met" if ce.marks_awarded > ce.max_marks / 2 else "Not Met"
                 ce.threshold_logic = "50% Fallback"
         else:
@@ -773,7 +794,7 @@ def stage4_calculate_scores(
         marks_awarded = min(raw_marks, cat.max_marks)
         pct           = round(marks_awarded / cat.max_marks * 100, 1) if cat.max_marks else 0.0
 
-        min_pct   = cat_min_map.get(cat.category)
+        min_pct, _src = cat_min_map.get(cat.category, (None, None))
         cat_passed = pct >= min_pct if min_pct is not None else pct > 0
         weighted   = round((marks_awarded / cat.max_marks) * cat.weight_percent, 2) if cat.max_marks else 0.0
 

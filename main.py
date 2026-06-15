@@ -83,6 +83,17 @@ async def evaluate(
                 ),
             )
         raise HTTPException(status_code=500, detail=str(exc))
+    except RuntimeError as exc:
+        msg = str(exc)
+        if "rate-limited" in msg or "All Groq" in msg:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "The AI service is temporarily unavailable due to rate limits. "
+                    "Please wait 1–2 minutes and try again."
+                ),
+            )
+        raise HTTPException(status_code=500, detail=f"Evaluation failed: {exc}")
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Evaluation failed: {exc}")
 

@@ -26,18 +26,21 @@ function statusBadge(s) {
 }
 
 function logicBadge(logic) {
-  const isRfp = logic && logic.startsWith('RFP')
+  const isCategoryMin    = logic && logic.startsWith('RFP Category')
+  const isOverallFallback = logic && logic.startsWith('Overall Min')
+  const bg     = isCategoryMin ? '#EEF2FF' : isOverallFallback ? '#FEF3C7' : '#F3F4F6'
+  const color  = isCategoryMin ? '#4F46E5' : isOverallFallback ? '#D97706' : '#6B7280'
+  const border = isCategoryMin ? '#C7D2FE' : isOverallFallback ? '#FCD34D' : '#E5E7EB'
+  const icon   = isCategoryMin ? '📋 ' : '⚖ '
   return (
     <span style={{
       display: 'inline-block',
       fontSize: '0.65rem', fontWeight: 600,
       padding: '2px 7px', borderRadius: 999,
-      background: isRfp ? '#EEF2FF' : '#F3F4F6',
-      color: isRfp ? '#4F46E5' : '#6B7280',
-      border: `1px solid ${isRfp ? '#C7D2FE' : '#E5E7EB'}`,
+      background: bg, color, border: `1px solid ${border}`,
       whiteSpace: 'nowrap',
     }}>
-      {isRfp ? '📋 ' : '⚖ '}{logic || '50% Fallback'}
+      {icon}{logic || '50% Fallback'}
     </span>
   )
 }
