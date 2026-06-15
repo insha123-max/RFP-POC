@@ -355,7 +355,9 @@ def _rfp_extract_prompt(chunk: str) -> str:
     )
 
 
-def _normalize_disqualifiers(raw: list) -> list:
+def _normalize_disqualifiers(raw) -> list:
+    if not isinstance(raw, list):
+        return []
     result = []
     for d in raw:
         if isinstance(d, dict):
@@ -399,31 +401,67 @@ async def stage2_extract_rules(rfp_text: str) -> EvaluationRules:
             else:
                 # LLM said no explicit marks in this chunk — skip its categories
                 print(f"[Stage2 chunk] rules_found=false — skipping fabricated categories")
-                for d in _normalize_disqualifiers(data.get("mandatory_disqualifiers", [])):
+                disqs = data.get("mandatory_disqualifiers", [])
+                for d in _normalize_disqualifiers(disqs):
                     if d not in all_disq:
                         all_disq.append(d)
                 continue
 
-            for cat in data.get("scoring_categories", []):
-                key = cat.get("category", "").strip().lower()
+            scoring_categories = data.get("scoring_categories", [])
+            if not isinstance(scoring_categories, list):
+                scoring_categories = []
+            for cat in scoring_categories:
+                if not isinstance(cat, dict):
+                    continue
+                key = cat.get("category", "")
+                if not isinstance(key, str):
+                    key = str(key)
+                key = key.strip().lower()
                 if not key:
                     continue
                 if key not in all_cats:
                     all_cats[key] = {**cat}
                 else:
-                    exist_subs = {s["criterion"].lower() for s in all_cats[key].get("subcriteria", [])}
-                    for sub in cat.get("subcriteria", []):
-                        if sub.get("criterion", "").lower() not in exist_subs:
+                    subs = all_cats[key].get("subcriteria", [])
+                    if not isinstance(subs, list):
+                        subs = []
+                    exist_subs = {s["criterion"].lower() for s in subs if isinstance(s, dict) and "criterion" in s}
+                    
+                    cat_subs = cat.get("subcriteria", [])
+                    if not isinstance(cat_subs, list):
+                        cat_subs = []
+                    for sub in cat_subs:
+                        if isinstance(sub, dict) and sub.get("criterion", "").lower() not in exist_subs:
                             all_cats[key].setdefault("subcriteria", []).append(sub)
-            for d in _normalize_disqualifiers(data.get("mandatory_disqualifiers", [])):
+
+            disqs = data.get("mandatory_disqualifiers", [])
+            for d in _normalize_disqualifiers(disqs):
                 if d not in all_disq:
                     all_disq.append(d)
+
             thresh = data.get("threshold", {})
-            pm = float(thresh.get("overall_pass_mark") or 0)
+            if not isinstance(thresh, dict):
+                thresh = {}
+            
+            pm = 0.0
+            overall_pm = thresh.get("overall_pass_mark", 0.0)
+            if isinstance(overall_pm, (int, float)):
+                pm = float(overall_pm)
+            elif isinstance(overall_pm, str):
+                try:
+                    pm = float(overall_pm)
+                except ValueError:
+                    pm = 0.0
+            
             if pm > pass_mark:
                 pass_mark = pm
-            for cm in thresh.get("category_minimums", []):
-                cat_mins[cm.get("category", "").lower()] = cm
+
+            cat_mins_list = thresh.get("category_minimums", [])
+            if not isinstance(cat_mins_list, list):
+                cat_mins_list = []
+            for cm in cat_mins_list:
+                if isinstance(cm, dict) and "category" in cm:
+                    cat_mins[cm.get("category", "").lower()] = cm
         except Exception as e:
             print(f"[Stage2 chunk] error: {e}")
             continue
@@ -433,8 +471,11 @@ async def stage2_extract_rules(rfp_text: str) -> EvaluationRules:
     for cat in all_cats.values():
         mm = float(cat.get("max_marks") or 0)
         wp = float(cat.get("weight_percent") or 0)
-        if mm == 0 and cat.get("subcriteria"):
-            mm = sum(float(s.get("max_marks") or 0) for s in cat["subcriteria"])
+        subs = cat.get("subcriteria", [])
+        if not isinstance(subs, list):
+            subs = []
+        if mm == 0 and subs:
+            mm = sum(float(s.get("max_marks") or 0) for s in subs if isinstance(s, dict))
         if wp == 0:
             wp = mm
         if mm > 0:
@@ -472,18 +513,31 @@ async def stage2_extract_rules(rfp_text: str) -> EvaluationRules:
     if total_w > 0:
         raw_cats = [(c, m, round(w / total_w * 100, 2)) for c, m, w in raw_cats]
 
-    categories = [
-        ScoringCategory(
-            category=c["category"], max_marks=m, weight_percent=w,
-            subcriteria=[
-                SubCriterion(**s) if isinstance(s, dict)
-                else SubCriterion(criterion=str(s), max_marks=0)
-                for s in c.get("subcriteria", [])
-                if s
-            ],
+    categories = []
+    for c, m, w in raw_cats:
+        subs = c.get("subcriteria", [])
+        if not isinstance(subs, list):
+            subs = []
+        subcriteria_list = []
+        for s in subs:
+            if not s:
+                continue
+            if isinstance(s, dict):
+                crit_name = s.get("criterion", "Criterion")
+                max_m = float(s.get("max_marks") or 0)
+                mand = bool(s.get("mandatory", False))
+                subcriteria_list.append(SubCriterion(criterion=crit_name, max_marks=max_m, mandatory=mand))
+            else:
+                subcriteria_list.append(SubCriterion(criterion=str(s), max_marks=0))
+        
+        categories.append(
+            ScoringCategory(
+                category=c.get("category", "Category"),
+                max_marks=m,
+                weight_percent=w,
+                subcriteria=subcriteria_list,
+            )
         )
-        for c, m, w in raw_cats
-    ]
 
     # ── Filter out parent criteria when sub-criteria are present ─────────────────
     for cat in categories:
@@ -510,8 +564,11 @@ async def stage2_extract_rules(rfp_text: str) -> EvaluationRules:
         ],
     )
 
+    # Force rules_found=False if no categories were successfully extracted
+    rules_extracted = any_explicit_rules and len(all_cats) > 0
+
     return EvaluationRules(
-        rules_found=any_explicit_rules,
+        rules_found=rules_extracted,
         scoring_categories=categories,
         threshold=threshold,
         mandatory_disqualifiers=all_disq,
@@ -629,13 +686,25 @@ Return ONLY a JSON array. For each criterion include marks_awarded as the ACTUAL
 
         try:
             items = _parse_array(await _call(prompt))
+            if not isinstance(items, list):
+                items = []
             # Trust stage2's mandatory flag — don't let the scoring LLM override it
             mandatory_lookup = {c["criterion"]: c.get("mandatory", False) for c in criteria_list}
             for item in items:
+                if not isinstance(item, dict):
+                    continue
                 crit_name = item.get("criterion", "")
                 if crit_name in mandatory_lookup:
                     item["is_mandatory"] = mandatory_lookup[crit_name]
-            all_evals.extend([CriterionEvaluation(**item) for item in items])
+                # Default missing keys in item to satisfy CriterionEvaluation
+                for k in ["criterion", "category", "vendor_claim", "source_reference", "compliance_status", "confidence", "justification"]:
+                    if k not in item:
+                        item[k] = "Not found" if k in ["vendor_claim", "source_reference"] else ""
+                if "max_marks" not in item:
+                    item["max_marks"] = 0.0
+                if "marks_awarded" not in item:
+                    item["marks_awarded"] = 0.0
+                all_evals.append(CriterionEvaluation(**item))
         except Exception:
             for c in criteria_list:
                 all_evals.append(CriterionEvaluation(
@@ -764,7 +833,16 @@ Return ONLY a JSON array:
 ]"""
 
     items = _parse_array(await _call(prompt))
-    return [DisqualifierCheck(**item) for item in items]
+    if not isinstance(items, list):
+        items = []
+    checks = []
+    for item in items:
+        if isinstance(item, dict):
+            cond = item.get("condition", "")
+            met = bool(item.get("met", True))
+            note = item.get("note", "")
+            checks.append(DisqualifierCheck(condition=cond, met=met, note=note))
+    return checks
 
 
 # ---------------------------------------------------------------------------
@@ -803,7 +881,16 @@ Return ONLY a JSON array of up to 7 items:
 ]"""
 
     items = _parse_array(await _call(prompt))
-    return [RiskItem(**item) for item in items]
+    if not isinstance(items, list):
+        items = []
+    risks = []
+    for item in items:
+        if isinstance(item, dict):
+            area = item.get("risk_area", "")
+            sev = item.get("severity", "Medium")
+            desc = item.get("description", "")
+            risks.append(RiskItem(risk_area=area, severity=sev, description=desc))
+    return risks
 
 
 # ---------------------------------------------------------------------------
