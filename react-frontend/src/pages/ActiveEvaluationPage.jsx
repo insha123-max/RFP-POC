@@ -97,24 +97,36 @@ function VendorCard({ vendor, pqChecks = [] }) {
         <div style={{ fontSize: '0.78rem', color: '#6B7280', marginTop: 4 }}>Overall Score</div>
       </div>
 
-      {/* PQ — Pre-Qualification checks */}
-      {pqChecks.length > 0 && (
-        <div style={{ marginBottom: 14 }}>
-          <div style={{ fontSize: '0.68rem', fontWeight: 700, color: '#92400E', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
-            {qualBadge('PQ')} Pre-Qualification
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-            {pqChecks.map((chk, i) => (
-              <div key={i} style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8, padding: '5px 8px', borderRadius: 6, background: chk.met ? '#F0FDF4' : '#FFF1F2', border: `1px solid ${chk.met ? '#BBF7D0' : '#FECDD3'}` }}>
-                <span style={{ fontSize: '0.75rem', color: '#374151', flex: 1 }}>{chk.condition}</span>
-                <span style={{ fontSize: '0.7rem', fontWeight: 700, flexShrink: 0, color: chk.met ? '#15803D' : '#DC2626' }}>
-                  {chk.met ? '✓ Pass' : '✗ Fail'}
+      {/* PQ — Pre-Qualification summary (generalised, like TQ) */}
+      {pqChecks.length > 0 && (() => {
+        const passed = pqChecks.filter(c => c.met).length
+        const total  = pqChecks.length
+        const pct    = Math.round((passed / total) * 100)
+        const allPass = passed === total
+        const barColor = allPass ? '#16A34A' : passed === 0 ? '#DC2626' : '#F59E0B'
+        const labelColor = allPass ? '#15803D' : passed === 0 ? '#DC2626' : '#B45309'
+        return (
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ fontSize: '0.68rem', fontWeight: 700, color: '#92400E', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+              {qualBadge('PQ')} Pre-Qualification
+            </div>
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                <span style={{ fontSize: '0.8rem', color: '#374151' }}>Eligibility Criteria</span>
+                <span style={{ fontSize: '0.72rem', fontWeight: 700, padding: '1px 8px', borderRadius: 4, background: allPass ? '#DCFCE7' : '#FEF3C7', color: labelColor }}>
+                  {passed}/{total} Met
                 </span>
               </div>
-            ))}
+              <div style={{ height: 6, background: '#E5E7EB', borderRadius: 999, overflow: 'hidden' }}>
+                <div style={{ height: '100%', borderRadius: 999, background: barColor, width: `${pct}%`, transition: 'width .8s' }} />
+              </div>
+              <div style={{ fontSize: '0.68rem', color: '#9CA3AF', marginTop: 4 }}>
+                {allPass ? 'All eligibility criteria met' : `${total - passed} criteria not met — see Requirements Assessment`}
+              </div>
+            </div>
           </div>
-        </div>
-      )}
+        )
+      })()}
 
       {/* TQ — Technical Qualification scored categories */}
       {vendor.categories.length > 0 && (
@@ -296,12 +308,26 @@ export default function ActiveEvaluationPage() {
   const score      = Math.round((report.total_score / report.max_score) * 100)
   const vendorName = stripExt(bidName)
 
+  // Separate PQ (pass/fail eligibility) from TQ (scored technical) category results
+  const pqCats = report.category_results.filter(cr => cr.qualification_type === 'PQ')
+  const tqCats = report.category_results.filter(cr => cr.qualification_type !== 'PQ')
+
+  // PQ checks shown as pass/fail in the vendor card — derived from PQ category results,
+  // falling back to mandatory disqualifier_checks for non-PQTQ evaluations
+  const pqChecks = pqCats.length > 0
+    ? pqCats.map(cr => ({
+        condition: cr.category,
+        met: cr.passed,
+        note: `${Math.round(cr.marks_awarded)}/${cr.max_marks} marks`,
+      }))
+    : (report.disqualifier_checks || [])
+
   const vendor = {
     name: vendorName,
     score,
     riskLevel: report.disqualified ? 'High Risk' : report.passed ? 'Low Risk' : 'Medium Risk',
     riskClass: report.disqualified ? 'badge-high' : report.passed ? 'badge-low' : 'badge-medium',
-    categories: report.category_results.map((cr, i) => ({
+    categories: tqCats.map((cr, i) => ({
       name: cr.category,
       score: Math.round(cr.percent_achieved),
       color: COLORS[i % COLORS.length],
@@ -310,23 +336,26 @@ export default function ActiveEvaluationPage() {
   }
 
   const allRawCriteria = report.category_results.flatMap(cr => cr.criteria)
-  const criteria = allRawCriteria.map(c => {
-    const cr = report.category_results.find(r => r.criteria.includes(c))
-    return {
-      name: c.criterion,
-      category: cr?.category ?? '',
-      weight: deriveWeight(c, allRawCriteria),
-      v1: c.compliance_status,
-      justification: c.justification,
-      vendor_claim: c.vendor_claim,
-      source_reference: c.source_reference,
-      confidence: c.confidence,
-      marks_awarded: c.marks_awarded,
-      max_marks: c.max_marks,
-      threshold_logic: c.threshold_logic || '50% Fallback',
-      qualification_type: c.qualification_type || '',
-    }
-  })
+  // PQ criteria shown as pass/fail pqRows in the table — exclude from scored rows to avoid duplication
+  const criteria = allRawCriteria
+    .filter(c => c.qualification_type !== 'PQ')
+    .map(c => {
+      const cr = report.category_results.find(r => r.criteria.includes(c))
+      return {
+        name: c.criterion,
+        category: cr?.category ?? '',
+        weight: deriveWeight(c, allRawCriteria),
+        v1: c.compliance_status,
+        justification: c.justification,
+        vendor_claim: c.vendor_claim,
+        source_reference: c.source_reference,
+        confidence: c.confidence,
+        marks_awarded: c.marks_awarded,
+        max_marks: c.max_marks,
+        threshold_logic: c.threshold_logic || '50% Fallback',
+        qualification_type: c.qualification_type || '',
+      }
+    })
 
   const risks = report.risk_items.map(r => ({
     vendor: vendorName,
@@ -496,7 +525,7 @@ export default function ActiveEvaluationPage() {
       {/* Vendor Card */}
       <div style={{ marginBottom: '1.75rem' }}>
         <h2 style={{ fontWeight: 700, fontSize: '1.05rem', color: '#111827', marginBottom: '1.25rem' }}>Vendor Evaluation</h2>
-        <VendorCard vendor={vendor} pqChecks={report.disqualifier_checks || []} />
+        <VendorCard vendor={vendor} pqChecks={pqChecks} />
       </div>
 
       {/* Pass Criteria Breakdown */}
@@ -602,7 +631,7 @@ export default function ActiveEvaluationPage() {
       </div>
 
       {/* Requirements Assessment */}
-      <RequirementsTable criteria={criteria} pqChecks={report.disqualifier_checks || []} />
+      <RequirementsTable criteria={criteria} pqChecks={pqChecks} />
 
       {/* Pre-Bid Q&A Clarifications */}
       {report.prebid_qa?.length > 0 && (

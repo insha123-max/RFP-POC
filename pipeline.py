@@ -372,36 +372,41 @@ def _rfp_extract_prompt(chunk: str) -> str:
 
 def _rfp_pqtq_prompt(chunk: str) -> str:
     return (
-        f"You are reading a tender/RFP document section. Your task is to extract ONLY the "
-        f"Pre-Qualification (PQ) and Technical Qualification (TQ) scoring criteria.\n\n"
+        f"You are reading a tender/RFP document section. Extract Pre-Qualification (PQ) eligibility "
+        f"conditions and Technical Qualification (TQ) scored criteria.\n\n"
         f"{chunk}\n\n"
-        f"SCOPE RESTRICTION — most important filter:\n"
-        f"  Extract ONLY criteria from sections named or closely matching:\n"
-        f"  - Pre-Qualification, Pre Qualification, PQ, Eligibility Criteria\n"
-        f"  - Technical Qualification, Technical Evaluation, TQ, Technical Criteria\n"
-        f"  - Experience, Manpower/Team, Technical Capacity, Past Performance\n"
-        f"  IGNORE and DO NOT extract criteria from: Financial Bid, Commercial Evaluation, "
-        f"Price, Cost, Turnover, Bank Guarantee, EMD, Document Submission checklists, "
-        f"or any section not related to technical or pre-qualification standing.\n\n"
-        f"STRICT RULES:\n\n"
-        f"RULE 0 — THE MOST IMPORTANT RULE:\n"
-        f"  Set rules_found=false and return EMPTY scoring_categories if no explicit numeric "
-        f"marks/points/scores/weightage are attached to PQ/TQ criteria. "
-        f"Do NOT invent, guess, or assume any marks.\n\n"
-        f"RULE 1: Do NOT group categories under a single parent. Each scoring category is independent.\n"
+        f"=== PART A — MANDATORY_DISQUALIFIERS (PQ eligibility, binary pass/fail) ===\n"
+        f"Extract the following from Eligibility Criteria / Pre-Qualification / Annexure sections "
+        f"as individual strings in mandatory_disqualifiers:\n"
+        f"  • Financial requirements: minimum turnover, net worth thresholds (e.g. 'Minimum average annual turnover of Rs. 50 crores')\n"
+        f"  • EMD / Bid Security: actual amount/percentage if stated (e.g. 'EMD of Rs. 10 lakhs required')\n"
+        f"  • Registration / empanelment: specific registry or body (e.g. 'CSP must be MeitY empanelled with India datacentre')\n"
+        f"  • Experience: specific minimums (e.g. 'Minimum 3 production GenAI use cases in last 5 years')\n"
+        f"  • Certifications: specific standards required (e.g. 'ISO 27001 and SOC 2 Type II certifications required')\n"
+        f"  • Team / manpower minimums (e.g. 'Minimum 10 full-time employees with GenAI skillsets')\n"
+        f"  • Make-in-India compliance (e.g. 'Bidder must qualify as Class-I or Class-II local supplier')\n\n"
+        f"CRITICAL RULES FOR PART A:\n"
+        f"  1. Each string must state the REQUIREMENT only — do NOT include any assessment, outcome, or note "
+        f"(e.g. NEVER write 'not found', 'not specified', 'not mentioned' in a condition string).\n"
+        f"  2. Only extract conditions that are EXPLICITLY stated in the document. Do NOT invent.\n"
+        f"  3. Keep each condition concise (under 15 words). One condition per entry.\n"
+        f"  4. If a requirement amount/threshold is not specified in the text, OMIT that entry — do not add it with a guess.\n\n"
+        f"=== PART B — SCORING_CATEGORIES (TQ criteria with explicit numeric marks) ===\n"
+        f"Extract ONLY Technical Qualification criteria that have EXPLICIT numeric marks/points/weightage.\n"
+        f"RULE 0: Set rules_found=true ONLY if you find explicit numeric marks for TQ criteria. "
+        f"Do NOT invent or guess marks. PQ eligibility conditions (Part A) do NOT count as scored categories.\n"
+        f"RULE 1: Each scoring category is independent — do not group under a single parent.\n"
         f"RULE 2: subcriteria must be a FLAT list — no nesting.\n"
-        f"RULE 3: Preserve exact criterion names and prefixes as they appear in the document.\n"
-        f"RULE 4: Set mandatory=true only when the document explicitly says mandatory/compulsory/must-meet.\n\n"
-        f"QUALIFICATION TYPE TAGGING:\n"
-        f"  For each extracted category, set qualification_type to exactly one of:\n"
-        f"  - \"PQ\" if the category belongs to Pre-Qualification / Eligibility Criteria sections\n"
-        f"  - \"TQ\" if the category belongs to Technical Qualification / Technical Evaluation sections\n\n"
+        f"RULE 3: Preserve exact criterion names as they appear.\n"
+        f"RULE 4: Set qualification_type=\"TQ\" for all scored categories (PQ goes in mandatory_disqualifiers).\n\n"
         f"Return ONLY JSON:\n"
-        f'{{"rules_found":true,"scoring_categories":[{{"category":"Category Name","max_marks":70,"weight_percent":70,"qualification_type":"PQ",'
+        f'{{"rules_found":true,"scoring_categories":[{{"category":"Category Name","max_marks":70,"weight_percent":70,"qualification_type":"TQ",'
         f'"subcriteria":[{{"criterion":"Sub-Criterion Name","max_marks":20,"mandatory":false}}]}}],'
-        f'"threshold":{{"overall_pass_mark":70,"category_minimums":[]}},"mandatory_disqualifiers":[]}}\n\n'
-        f"If no explicit numeric marks exist for PQ/TQ criteria in this text: "
-        f'return exactly {{"rules_found":false,"scoring_categories":[],"threshold":{{"overall_pass_mark":0,"category_minimums":[]}},"mandatory_disqualifiers":[]}}'
+        f'"threshold":{{"overall_pass_mark":70,"category_minimums":[]}},'
+        f'"mandatory_disqualifiers":["Minimum average annual turnover Rs. 50 crores","EMD of Rs. 10 lakhs required","Minimum 3 production GenAI use cases"]}}\n\n'
+        f"If no explicit numeric TQ marks exist, still populate mandatory_disqualifiers with any PQ eligibility conditions found:\n"
+        f'{{"rules_found":false,"scoring_categories":[],"threshold":{{"overall_pass_mark":0,"category_minimums":[]}},'
+        f'"mandatory_disqualifiers":["<concise requirement 1>","<concise requirement 2>"]}}'
     )
 
 
@@ -1065,14 +1070,20 @@ async def stage4b_check_disqualifiers(
     disq_criteria = [{"criterion": d} for d in disqualifiers]
     relevant_bid  = _extract_bid_sections(bid_text, disq_criteria, MAX_DISQ_CHARS)
 
-    prompt = f"""Check whether the vendor bid satisfies each mandatory requirement below.
+    prompt = f"""Check whether the vendor bid satisfies each mandatory Pre-Qualification requirement below.
 
-IMPORTANT RULES:
-- For document submission requirements (e.g. "Submission of Bank Guarantee required", "Power of Attorney"),
-  set met=true ONLY if the vendor explicitly mentions submitting or enclosing it, OR the bid clearly includes it.
-  Set met=false if the document is not mentioned at all, or if the vendor states they are NOT providing it.
-- For eligibility criteria, set met=true ONLY if clear, explicit evidence exists in the bid.
-- Default to met=false when evidence is unclear, absent, or insufficient — only mark met=true on clear compliance.
+HOW TO EVALUATE:
+- Financial thresholds (turnover, net worth): met=true if the bid explicitly states a figure that meets or exceeds the threshold.
+- Experience requirements (number of projects, use cases): met=true if the bid lists qualifying projects/use cases meeting the count.
+- Certification requirements: met=true if the bid explicitly claims or attaches the required certificates.
+- Registration/empanelment: met=true if the bid explicitly confirms the registration with the specified body.
+- EMD/Bid Security: met=true if the bid states EMD is enclosed/submitted, or confirms it is exempt with a valid reason.
+- Make-in-India/local supplier: met=true if the bid explicitly claims Class-I or Class-II local supplier status.
+- Team/manpower: met=true if the bid provides a team list or staffing section with headcount meeting the minimum.
+
+DEFAULT RULE: If the bid does not address a requirement at all → met=false.
+If evidence is partial or ambiguous → met=false.
+Write the note as a SHORT quote or summary from the bid (under 20 words), or "Not mentioned in bid" if absent.
 
 VENDOR BID (relevant sections):
 {relevant_bid}
@@ -1080,12 +1091,12 @@ VENDOR BID (relevant sections):
 MANDATORY REQUIREMENTS:
 {json.dumps(disqualifiers, indent=2)}
 
-Return ONLY a JSON array:
+Return ONLY a JSON array — one entry per requirement, in the same order:
 [
   {{
     "condition": "<exact requirement text>",
     "met": true,
-    "note": "<evidence from bid confirming compliance, or 'Not mentioned in bid — defaulting to Fail'>"
+    "note": "<short quote or evidence from bid, or 'Not mentioned in bid'>"
   }}
 ]"""
 
