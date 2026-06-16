@@ -184,11 +184,20 @@ async def evaluate_custom(
 async def evaluate_pqtq(
     rfp_file: UploadFile = File(..., description="RFP / Tender document"),
     bid_files: List[UploadFile] = File(..., description="Vendor bid / response documents"),
+    extra_rfp_files: List[UploadFile] = File(default=[], description="Additional rule/scoring documents (annexures, scoring matrices)"),
 ):
     rfp_bytes = await rfp_file.read()
     rfp_text, rfp_err = extract_text(rfp_file.filename or "rfp.pdf", rfp_bytes)
     if rfp_err:
         raise HTTPException(status_code=400, detail=f"RFP document error: {rfp_err}")
+
+    # Concatenate additional rule documents with the RFP text so Stage 2
+    # can extract criteria from annexures / scoring matrices uploaded separately.
+    for i, ef in enumerate(extra_rfp_files):
+        ef_bytes = await ef.read()
+        ef_text, ef_err = extract_text(ef.filename or f"extra_rfp_{i+1}.pdf", ef_bytes)
+        if not ef_err and ef_text.strip():
+            rfp_text += f"\n\n=== ADDITIONAL DOCUMENT: {ef.filename} ===\n{ef_text}"
 
     bid_parts = []
     for i, bid_file in enumerate(bid_files):

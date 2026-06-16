@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { runPQTQEvaluation } from '../api'
+import { runPQTQEvaluation, runCustomEvaluation } from '../api'
 import { useEvaluation } from '../context/EvaluationContext'
 
 const ACCENT = '#4F46E5'
@@ -213,6 +213,100 @@ function MultiUploadZone({ label, sub, files, onFiles, accent }) {
   )
 }
 
+/* ── Custom Criteria Form (PQTQ variant) ─────────────────────────────────── */
+const newCriterion = () => ({ id: Date.now() + Math.random(), question: '', maxMarks: 10, mandatory: false })
+const newCategory  = () => ({ id: Date.now() + Math.random(), name: '', minimumRequired: 50, criteria: [newCriterion()] })
+const DEFAULT_CUSTOM_CRITERIA = { threshold: 50, categories: [newCategory()] }
+
+function buildCriteriaPayload(customCriteria) {
+  const totalMarks = customCriteria.categories.reduce(
+    (sum, cat) => sum + cat.criteria.reduce((s, c) => s + (Number(c.maxMarks) || 0), 0), 0
+  )
+  return {
+    threshold: customCriteria.threshold,
+    categories: customCriteria.categories.map(cat => {
+      const catMarks = cat.criteria.reduce((s, c) => s + (Number(c.maxMarks) || 0), 0)
+      return {
+        name: cat.name,
+        weight: totalMarks > 0 ? Math.round(catMarks / totalMarks * 100) : Math.round(100 / customCriteria.categories.length),
+        minimum_required: cat.minimumRequired,
+        criteria: cat.criteria.map(c => ({ question: c.question, max_marks: Number(c.maxMarks), mandatory: c.mandatory })),
+      }
+    }),
+  }
+}
+
+function CustomCriteriaForm({ value, onChange }) {
+  const { threshold, categories } = value
+  const set = next => onChange(next)
+  const addCategory = () => set({ ...value, categories: [...categories, newCategory()] })
+  const removeCategory = id => set({ ...value, categories: categories.filter(c => c.id !== id) })
+  const updateCat = (id, patch) => set({ ...value, categories: categories.map(c => c.id === id ? { ...c, ...patch } : c) })
+  const addCriterion = catId => { const cat = categories.find(c => c.id === catId); updateCat(catId, { criteria: [...cat.criteria, newCriterion()] }) }
+  const removeCriterion = (catId, critId) => { const cat = categories.find(c => c.id === catId); if (cat.criteria.length === 1) return; updateCat(catId, { criteria: cat.criteria.filter(c => c.id !== critId) }) }
+  const updateCrit = (catId, critId, patch) => { const cat = categories.find(c => c.id === catId); updateCat(catId, { criteria: cat.criteria.map(c => c.id === critId ? { ...c, ...patch } : c) }) }
+  const totalMarks = categories.reduce((sum, cat) => sum + cat.criteria.reduce((s, c) => s + (Number(c.maxMarks) || 0), 0), 0)
+  const inp = { padding: '0.4rem 0.625rem', border: '1px solid #E2E8F0', borderRadius: 6, fontSize: '0.82rem', color: '#1E293B', outline: 'none', background: '#fff' }
+
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', padding: '0.75rem 1rem', background: '#F8FAFC', borderRadius: 8, border: '1px solid #E2E8F0', marginBottom: '1.25rem' }}>
+        <div style={{ flex: 1, minWidth: 160 }}>
+          <div style={{ fontWeight: 600, fontSize: '0.82rem', color: '#1E293B' }}>Pass Threshold</div>
+          <div style={{ fontSize: '0.72rem', color: '#64748B' }}>Minimum score % to pass</div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <input type="number" min="1" max="100" value={threshold} onChange={e => set({ ...value, threshold: Number(e.target.value) })} style={{ ...inp, width: 58, textAlign: 'center', fontWeight: 700 }} />
+          <span style={{ fontSize: '0.82rem', color: '#64748B' }}>%</span>
+        </div>
+        <div style={{ fontSize: '0.72rem', color: '#94A3B8', marginLeft: 8 }}>Total marks: <strong style={{ color: ACCENT }}>{totalMarks}</strong></div>
+      </div>
+
+      {categories.map((cat, catIdx) => {
+        const catMarks  = cat.criteria.reduce((s, c) => s + (Number(c.maxMarks) || 0), 0)
+        const catWeight = totalMarks > 0 ? Math.round(catMarks / totalMarks * 100) : 0
+        return (
+          <div key={cat.id} style={{ border: '1px solid #E2E8F0', borderRadius: 10, marginBottom: '0.875rem', overflow: 'hidden' }}>
+            <div style={{ background: '#F8FAFC', padding: '0.625rem 1rem', borderBottom: '1px solid #E2E8F0', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div style={{ width: 22, height: 22, borderRadius: 6, background: ACCENT, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.65rem', fontWeight: 800, flexShrink: 0 }}>{catIdx + 1}</div>
+              <input placeholder="Category name (e.g. Technical Experience)" value={cat.name} onChange={e => updateCat(cat.id, { name: e.target.value })} style={{ flex: 1, border: 'none', background: 'transparent', outline: 'none', fontSize: '0.82rem', fontWeight: 600, color: '#1E293B' }} />
+              <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+                <span style={{ fontSize: '0.7rem', color: '#94A3B8' }}>Min</span>
+                <input type="number" min="0" max="100" value={cat.minimumRequired} onChange={e => updateCat(cat.id, { minimumRequired: Number(e.target.value) })} style={{ ...inp, width: 42, textAlign: 'center', padding: '2px 4px' }} />
+                <span style={{ fontSize: '0.7rem', color: '#94A3B8' }}>%</span>
+                <span style={{ fontSize: '0.68rem', color: ACCENT, fontWeight: 700, marginLeft: 6 }}>{catMarks}pts · {catWeight}%</span>
+              </div>
+              {categories.length > 1 && (
+                <button onClick={() => removeCategory(cat.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#CBD5E1', fontSize: '1.1rem', lineHeight: 1, padding: '2px 4px', flexShrink: 0 }} onMouseEnter={e => e.target.style.color = '#EF4444'} onMouseLeave={e => e.target.style.color = '#CBD5E1'}>×</button>
+              )}
+            </div>
+            <div style={{ padding: '0.75rem 1rem' }}>
+              {cat.criteria.map((crit, critIdx) => (
+                <div key={crit.id} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                  <span style={{ fontSize: '0.68rem', color: '#CBD5E1', width: 14, textAlign: 'right', flexShrink: 0 }}>{critIdx + 1}.</span>
+                  <input placeholder={`PQ/TQ criterion ${critIdx + 1}…`} value={crit.question} onChange={e => updateCrit(cat.id, crit.id, { question: e.target.value })} style={{ ...inp, flex: 1 }} onFocus={e => e.target.style.borderColor = ACCENT_MID} onBlur={e => e.target.style.borderColor = '#E2E8F0'} />
+                  <input type="number" min="1" max="999" value={crit.maxMarks} onChange={e => updateCrit(cat.id, crit.id, { maxMarks: Number(e.target.value) })} style={{ ...inp, width: 50, textAlign: 'center' }} title="Max marks" />
+                  <span style={{ fontSize: '0.68rem', color: '#94A3B8', flexShrink: 0 }}>pts</span>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 3, cursor: 'pointer', flexShrink: 0 }}>
+                    <input type="checkbox" checked={crit.mandatory} onChange={e => updateCrit(cat.id, crit.id, { mandatory: e.target.checked })} style={{ cursor: 'pointer', accentColor: '#DC2626' }} />
+                    <span style={{ fontSize: '0.68rem', color: '#64748B' }}>Must</span>
+                  </label>
+                  {cat.criteria.length > 1 && (
+                    <button onClick={() => removeCriterion(cat.id, crit.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#CBD5E1', fontSize: '1rem', lineHeight: 1, padding: '2px', flexShrink: 0 }} onMouseEnter={e => e.target.style.color = '#EF4444'} onMouseLeave={e => e.target.style.color = '#CBD5E1'}>×</button>
+                  )}
+                </div>
+              ))}
+              <button onClick={() => addCriterion(cat.id)} style={{ marginTop: 4, background: 'none', border: '1px dashed #CBD5E1', borderRadius: 6, padding: '0.3rem 0.75rem', cursor: 'pointer', color: '#94A3B8', fontSize: '0.75rem', fontWeight: 600, transition: 'all .15s' }} onMouseEnter={e => { e.currentTarget.style.borderColor = ACCENT_MID; e.currentTarget.style.color = ACCENT }} onMouseLeave={e => { e.currentTarget.style.borderColor = '#CBD5E1'; e.currentTarget.style.color = '#94A3B8' }}>+ Add Criterion</button>
+            </div>
+          </div>
+        )
+      })}
+
+      <button onClick={addCategory} style={{ width: '100%', padding: '0.6rem', border: '1.5px dashed #CBD5E1', borderRadius: 8, background: 'none', cursor: 'pointer', color: '#64748B', fontSize: '0.8rem', fontWeight: 600, transition: 'all .15s' }} onMouseEnter={e => { e.currentTarget.style.borderColor = ACCENT_MID; e.currentTarget.style.color = ACCENT; e.currentTarget.style.background = ACCENT_LIGHT }} onMouseLeave={e => { e.currentTarget.style.borderColor = '#CBD5E1'; e.currentTarget.style.color = '#64748B'; e.currentTarget.style.background = 'none' }}>+ Add Category</button>
+    </div>
+  )
+}
+
 function StepCard({ step, state }) {
   const isPending = state === 'pending'
   const isActive  = state === 'active'
@@ -315,13 +409,23 @@ function StepCard({ step, state }) {
 }
 
 export default function PQTQEvaluatePage() {
-  const [rfpFile, setRfpFile]   = useState(null)
-  const [bidFiles, setBidFiles] = useState([])
-  const [phase, setPhase]       = useState('upload')   // upload | progress | error
+  const [rfpFile, setRfpFile]       = useState(null)
+  const [bidFiles, setBidFiles]     = useState([])
+  const [extraFiles, setExtraFiles] = useState([])
+  const [customCriteria, setCustomCriteria] = useState(DEFAULT_CUSTOM_CRITERIA)
+  const [phase, setPhase]           = useState('upload')  // upload | progress | no_rules | error
   const [stepStates, setStepStates] = useState(STEPS.map(() => 'pending'))
-  const [error, setError]       = useState('')
+  const [error, setError]           = useState('')
   const { setReport, setRfpName, setBidName, addToHistory } = useEvaluation()
   const navigate = useNavigate()
+
+  const isCriteriaReady =
+    customCriteria.categories.length > 0 &&
+    customCriteria.categories.every(cat =>
+      cat.name.trim() !== '' &&
+      cat.criteria.length > 0 &&
+      cat.criteria.every(c => c.question.trim() !== '' && Number(c.maxMarks) > 0)
+    )
 
   const advance = (idx, state) =>
     setStepStates(s => s.map((v, i) => (i === idx ? state : v)))
@@ -362,17 +466,117 @@ export default function PQTQEvaluatePage() {
     setError('')
     const timers = makeTimers()
     try {
-      const report = await runPQTQEvaluation(rfpFile, bidFiles)
+      const report = await runPQTQEvaluation(rfpFile, bidFiles, extraFiles)
       timers.forEach(clearTimeout)
       await finishEvaluation(report, rfpFile.name)
     } catch (e) {
       timers.forEach(clearTimeout)
-      const msg = e.message.includes('NO_RULES_FOUND')
-        ? 'No Pre-Qualification or Technical Qualification scoring criteria with explicit marks were found in this RFP. Please ensure the RFP includes a PQ/TQ scoring matrix.'
-        : e.message
-      setError(msg)
-      setPhase('error')
+      if (e.message.includes('NO_RULES_FOUND')) {
+        setPhase('no_rules')
+      } else {
+        setError(e.message)
+        setPhase('error')
+      }
     }
+  }
+
+  async function handleEvaluateCustom() {
+    setPhase('progress')
+    setStepStates(STEPS.map(() => 'pending'))
+    setError('')
+    const timers = makeTimers()
+    try {
+      const report = await runCustomEvaluation([...bidFiles, ...extraFiles], buildCriteriaPayload(customCriteria))
+      timers.forEach(clearTimeout)
+      await finishEvaluation(report, rfpFile?.name ?? 'PQTQ Custom Criteria')
+    } catch (e) {
+      timers.forEach(clearTimeout)
+      setError(e.message)
+      setPhase('no_rules')
+    }
+  }
+
+  if (phase === 'no_rules') {
+    return (
+      <div className="page-content fade-in">
+        <div style={{ marginBottom: '1.5rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+            <div style={{ background: ACCENT_LIGHT, border: `1px solid #C7D2FE`, borderRadius: 8, padding: '3px 10px', fontSize: '0.68rem', fontWeight: 800, color: ACCENT, letterSpacing: '0.06em' }}>PQTQ</div>
+            <h1 style={{ fontSize: '1.5rem', fontWeight: 800, margin: 0 }}>Define PQ/TQ Criteria</h1>
+          </div>
+          <p style={{ color: '#64748B', margin: 0 }}>
+            No PQ/TQ scoring criteria with numeric marks were found in the RFP. Define criteria manually — the AI will evaluate the bid against them.
+          </p>
+        </div>
+
+        {/* Uploaded files summary */}
+        <div className="card" style={{ padding: '1rem 1.25rem', marginBottom: '1.5rem', display: 'flex', gap: '1.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+          {rfpFile && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div style={{ width: 28, height: 28, borderRadius: 6, background: ACCENT_LIGHT, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={ACCENT} strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+              </div>
+              <div>
+                <div style={{ fontSize: '0.72rem', color: '#94A3B8', fontWeight: 600 }}>RFP</div>
+                <div style={{ fontSize: '0.8rem', color: '#1E293B', fontWeight: 600 }}>{rfpFile.name}</div>
+              </div>
+            </div>
+          )}
+          {bidFiles.length > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div style={{ width: 28, height: 28, borderRadius: 6, background: '#DCFCE7', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#16A34A" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+              </div>
+              <div>
+                <div style={{ fontSize: '0.72rem', color: '#94A3B8', fontWeight: 600 }}>BID{bidFiles.length > 1 ? 'S' : ''}</div>
+                <div style={{ fontSize: '0.8rem', color: '#1E293B', fontWeight: 600 }}>{bidFiles.map(f => f.name).join(', ')}</div>
+              </div>
+            </div>
+          )}
+          {extraFiles.length > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div style={{ width: 28, height: 28, borderRadius: 6, background: '#EDE9FE', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#7C3AED" strokeWidth="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+              </div>
+              <div>
+                <div style={{ fontSize: '0.72rem', color: '#94A3B8', fontWeight: 600 }}>SUPPORTING</div>
+                <div style={{ fontSize: '0.8rem', color: '#1E293B', fontWeight: 600 }}>{extraFiles.map(f => f.name).join(', ')}</div>
+              </div>
+            </div>
+          )}
+          <button onClick={() => setPhase('upload')} style={{ marginLeft: 'auto', background: 'none', border: '1px solid #E2E8F0', borderRadius: 6, padding: '0.35rem 0.75rem', cursor: 'pointer', fontSize: '0.75rem', color: '#64748B', fontWeight: 600 }}>← Change files</button>
+        </div>
+
+        {error && (
+          <div style={{ background: '#FFF1F2', border: '1px solid #FECDD3', borderLeft: '4px solid #EF4444', borderRadius: 10, padding: '1rem 1.25rem', marginBottom: '1.5rem' }}>
+            <div style={{ fontWeight: 700, color: '#BE123C', marginBottom: 4 }}>Evaluation Failed</div>
+            <div style={{ fontSize: '0.875rem', color: '#9F1239' }}>{error}</div>
+          </div>
+        )}
+
+        <div className="card" style={{ padding: '2rem' }}>
+          <div style={{ fontWeight: 700, fontSize: '1rem', color: '#1E293B', marginBottom: '0.5rem' }}>PQ/TQ Scoring Criteria</div>
+          <div style={{ fontSize: '0.8rem', color: '#64748B', marginBottom: '1.25rem' }}>
+            Define Pre-Qualification and Technical Qualification categories and criteria. The AI will score the bid on each one.
+          </div>
+          <CustomCriteriaForm value={customCriteria} onChange={setCustomCriteria} />
+          <div style={{ borderTop: '1px solid #E2E8F0', paddingTop: '1.5rem', textAlign: 'center', marginTop: '1.5rem' }}>
+            <button
+              className="btn btn-primary"
+              style={{ padding: '0.75rem 2.5rem', fontSize: '1rem', background: ACCENT, borderColor: ACCENT }}
+              disabled={!isCriteriaReady}
+              onClick={handleEvaluateCustom}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+              </svg>
+              Run PQTQ Evaluation
+            </button>
+            <p style={{ marginTop: 10, fontSize: '0.78rem', color: '#94A3B8' }}>Powered by Groq LLaMA — results in 30–90 seconds</p>
+          </div>
+        </div>
+      </div>
+    )
   }
 
   if (phase === 'progress') {
@@ -493,6 +697,20 @@ export default function PQTQEvaluatePage() {
               />
             </div>
 
+            {/* Optional supporting documents */}
+            <div style={{ borderTop: '1px dashed #E2E8F0', paddingTop: '1.25rem', marginBottom: '1.5rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: '0.75rem' }}>
+                <span style={{ background: '#F1F5F9', borderRadius: 4, padding: '1px 7px', fontSize: '0.65rem', fontWeight: 800, color: '#94A3B8', letterSpacing: '0.04em' }}>OPTIONAL</span>
+                <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#475569' }}>Supporting Documents</span>
+                <span style={{ fontSize: '0.72rem', color: '#94A3B8' }}>— PQ evidence, certificates, company profiles</span>
+              </div>
+              <MultiUploadZone
+                label="PQ Evidence / Supporting Docs"
+                sub="Certificates, registration letters, experience proof (PDF, DOCX)"
+                files={extraFiles} onFiles={setExtraFiles} accent={ACCENT}
+              />
+            </div>
+
             <div style={{ borderTop: '1px solid #E2E8F0', paddingTop: '1.5rem', textAlign: 'center' }}>
               <button
                 className="btn btn-primary"
@@ -601,6 +819,31 @@ export default function PQTQEvaluatePage() {
                   }}>Ready</span>
                 </div>
               ))}
+
+              {/* Supporting docs status row */}
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 12, padding: '0.7rem 1rem', borderRadius: 8,
+                background: extraFiles.length > 0 ? '#F5F3FF' : '#F8FAFC',
+                border: `1px solid ${extraFiles.length > 0 ? '#DDD6FE' : '#E2E8F0'}`,
+              }}>
+                <div style={{ width: 28, height: 28, borderRadius: 6, background: extraFiles.length > 0 ? '#EDE9FE' : '#E2E8F0', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={extraFiles.length > 0 ? '#7C3AED' : '#94A3B8'} strokeWidth="2">
+                    <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+                  </svg>
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: '0.8rem', fontWeight: 600, color: '#1E293B' }}>
+                    Supporting Documents
+                    {extraFiles.length === 0 && <span style={{ marginLeft: 6, fontSize: '0.65rem', color: '#94A3B8', fontWeight: 700 }}>OPTIONAL</span>}
+                  </div>
+                  <div style={{ fontSize: '0.72rem', color: extraFiles.length > 0 ? '#7C3AED' : '#94A3B8', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {extraFiles.length > 0 ? `${extraFiles.length} file${extraFiles.length > 1 ? 's' : ''} — ${extraFiles.map(f => f.name).join(', ')}` : 'Not uploaded'}
+                  </div>
+                </div>
+                <span style={{ fontSize: '0.68rem', fontWeight: 700, padding: '2px 8px', borderRadius: 999, background: extraFiles.length > 0 ? '#EDE9FE' : '#F1F5F9', color: extraFiles.length > 0 ? '#5B21B6' : '#94A3B8' }}>
+                  {extraFiles.length > 0 ? 'Ready' : 'Skipped'}
+                </span>
+              </div>
             </div>
           </div>
         </div>

@@ -158,7 +158,7 @@ function VendorCard({ vendor, pqChecks = [] }) {
 }
 
 /* ── Requirements Table ─────────────────────────────────────────────────── */
-function RequirementsTable({ criteria, pqChecks = [] }) {
+function RequirementsTable({ criteria, pqChecks = [], title = 'Requirements Assessment', qualType = '' }) {
   const [filter, setFilter] = useState('all')
 
   const pqRows = pqChecks.map(chk => ({
@@ -175,11 +175,29 @@ function RequirementsTable({ criteria, pqChecks = [] }) {
 
   const allRows = [...pqRows, ...criteria]
   const filtered = filter === 'all' ? allRows : allRows.filter(c => c.v1 === filter)
+  const metCount    = allRows.filter(r => r.v1 === 'Met').length
+  const notMetCount = allRows.filter(r => r.v1 === 'Not Met').length
 
   return (
     <div className="card" style={{ padding: 0, overflow: 'hidden', marginBottom: '1.5rem' }}>
       <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid #E5E7EB', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={{ fontWeight: 700, fontSize: '1rem' }}>Requirements Assessment</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {qualType && qualBadge(qualType)}
+          <span style={{ fontWeight: 700, fontSize: '1rem' }}>{title}</span>
+          <span style={{ fontSize: '0.7rem', color: '#6B7280', background: '#F1F5F9', borderRadius: 999, padding: '2px 8px', fontWeight: 600 }}>
+            {allRows.length} criteria
+          </span>
+          {qualType && (
+            <span style={{ display: 'flex', gap: 5 }}>
+              <span style={{ fontSize: '0.7rem', fontWeight: 700, background: '#DCFCE7', color: '#15803D', borderRadius: 999, padding: '2px 8px' }}>
+                ✓ {metCount} Met
+              </span>
+              <span style={{ fontSize: '0.7rem', fontWeight: 700, background: '#FEE2E2', color: '#DC2626', borderRadius: 999, padding: '2px 8px' }}>
+                ✗ {notMetCount} Not Met
+              </span>
+            </span>
+          )}
+        </div>
         <div style={{ display: 'flex', gap: 6 }}>
           {['all', 'Met', 'Not Met'].map(f => (
             <button key={f} onClick={() => setFilter(f)} style={{
@@ -256,6 +274,7 @@ function RiskItem({ vendor, desc, type, severity }) {
     </div>
   )
 }
+
 
 /* ── Root Cause Panel ───────────────────────────────────────────────────── */
 function RootCausePanel({ report }) {
@@ -336,6 +355,9 @@ export default function ActiveEvaluationPage() {
   }
 
   const allRawCriteria = report.category_results.flatMap(cr => cr.criteria)
+  const pqtqCriteria = allRawCriteria.filter(c => c.qualification_type === 'PQ' || c.qualification_type === 'TQ')
+  const isPQTQ = pqtqCriteria.length > 0
+
   // PQ criteria shown as pass/fail pqRows in the table — exclude from scored rows to avoid duplication
   const criteria = allRawCriteria
     .filter(c => c.qualification_type !== 'PQ')
@@ -356,6 +378,26 @@ export default function ActiveEvaluationPage() {
         qualification_type: c.qualification_type || '',
       }
     })
+
+  const tqTableRows = isPQTQ
+    ? allRawCriteria.filter(c => c.qualification_type === 'TQ').map(c => {
+        const cr = report.category_results.find(r => r.criteria.includes(c))
+        return {
+          name: c.criterion,
+          category: cr?.category ?? '',
+          weight: deriveWeight(c, allRawCriteria),
+          v1: c.compliance_status,
+          justification: c.justification,
+          vendor_claim: c.vendor_claim,
+          source_reference: c.source_reference,
+          confidence: c.confidence,
+          marks_awarded: c.marks_awarded,
+          max_marks: c.max_marks,
+          threshold_logic: c.threshold_logic || 'PQ Pass/Fail',
+          qualification_type: 'TQ',
+        }
+      })
+    : []
 
   const risks = report.risk_items.map(r => ({
     vendor: vendorName,
@@ -630,8 +672,28 @@ export default function ActiveEvaluationPage() {
         </div>
       </div>
 
-      {/* Requirements Assessment */}
-      <RequirementsTable criteria={criteria} pqChecks={pqChecks} />
+      {/* Requirements Assessment — split by PQ / TQ in PQTQ mode */}
+      {isPQTQ ? (
+        <>
+          {pqChecks.length > 0 && (
+            <RequirementsTable
+              criteria={[]}
+              pqChecks={pqChecks}
+              title="Pre-Qualification Requirements"
+              qualType="PQ"
+            />
+          )}
+          {tqTableRows.length > 0 && (
+            <RequirementsTable
+              criteria={tqTableRows}
+              title="Technical Qualification Criteria"
+              qualType="TQ"
+            />
+          )}
+        </>
+      ) : (
+        <RequirementsTable criteria={criteria} pqChecks={pqChecks} />
+      )}
 
       {/* Pre-Bid Q&A Clarifications */}
       {report.prebid_qa?.length > 0 && (

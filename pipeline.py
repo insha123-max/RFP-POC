@@ -812,11 +812,12 @@ async def stage2_extract_pqtq_rules(rfp_text: str) -> EvaluationRules:
 # ---------------------------------------------------------------------------
 
 async def stage3_parse_vendor_response(
-    bid_text: str, rules: EvaluationRules, rfp_scoring_text: str = ""
+    bid_text: str, rules: EvaluationRules, rfp_scoring_text: str = "", pqtq_mode: bool = False
 ) -> List[CriterionEvaluation]:
     """Evaluate each scoring category separately so bid extraction is focused.
-    
-    Accepts optional rfp_scoring_text so the LLM can evaluate tiered marks directly.
+
+    pqtq_mode=True uses a lenient three-tier prompt (Met/Partial/Not Met) that
+    accepts implied and indirect PQ/TQ compliance instead of requiring explicit proof.
     """
     all_evals: List[CriterionEvaluation] = []
 
@@ -848,39 +849,58 @@ async def stage3_parse_vendor_response(
 
         today = date.today().strftime("%B %d, %Y")
 
-        scoring_instruction = (
-            "This is a broad category assessment. Award 'Met' if the bid clearly addresses "
-            "this category, 'Partial' if the bid partially addresses it, 'Not Met' only if "
-            "completely absent."
-            if is_generic else
-            "IMPORTANT CONTEXT: This is a BID DOCUMENT evaluation, not post-event scoring. "
-            "For criteria that involve future scheduled events (presentations, demonstrations), "
-            "evaluate based on the vendor's PLAN and CAPABILITY evidence in the bid:\n"
-            "- 'Met': Vendor provides detailed plan/content AND has demonstrable live systems/capability. Set marks_awarded = max_marks.\n"
-            "- 'Partial': Vendor confirms participation but lacks detail or supporting capability evidence. Set marks_awarded = 50% of max_marks.\n"
-            "- 'Not Met': No mention of the criterion, or vendor explicitly cannot meet it. Set marks_awarded = 0.\n"
-            "Do NOT score 'Not Met' simply because the event has not yet occurred."
-            if is_future_event else
-            f"PASS/FAIL SCORING (today is {today}):\n"
-            "Evaluate each criterion as a simple binary check — there are no tiers.\n"
-            "- 'Met' (marks_awarded = max_marks): The bid clearly satisfies the requirement.\n"
-            "- 'Not Met' (marks_awarded = 0): The bid does not satisfy the requirement.\n"
-            "Do NOT invent tiers or partial credit. For numeric minimums (e.g. 'minimum 5 years'), "
-            "use today's date to calculate the duration and mark 'Met' if the vendor meets or exceeds it.\n"
-            "If the requirement is 'must include X' and the bid includes X, mark as Met."
-            if not rfp_scoring_text else
-            "TIERED SCORING INSTRUCTIONS:\n"
-            "Many criteria have tiered marks (e.g. 3+ BFSI cases = 10 marks, 2 cases = 6 marks, 1 case = 3 marks; "
-            "or 1000+ users = 10 marks, 100-999 users = 6 marks; "
-            "or 15+ implementations = 10 marks, 10-14 = 8 marks, 5-9 = 6 marks; "
-            "or 50%+ team with 2+ certs = 5 marks, 50%+ with 1 cert = 3 marks). "
-            "Read what the vendor ACTUALLY claims (number of cases, users, implementations, certification counts) "
-            "and award marks_awarded based on the appropriate tier — NOT simply max_marks for any evidence. "
-            "'Met' means the vendor clearly meets the HIGHEST tier. "
-            "'Partial' means the vendor meets a LOWER tier but not the highest. "
-            "'Not Met' means no qualifying evidence exists. "
-            "ALWAYS set marks_awarded to the specific tiered value that matches the vendor's evidence."
-        )
+        if pqtq_mode:
+            scoring_instruction = (
+                f"PQ/TQ COMPLIANCE ASSESSMENT (today is {today}):\n"
+                "This bid is a proposal or presentation document. PQ/TQ compliance is proven by separate "
+                "certificates and letters — DO NOT require formal documentation to be embedded in the bid. "
+                "Assess only what is evidenced or addressed in the bid document itself.\n\n"
+                "Use these three tiers:\n"
+                "- 'Met' (marks_awarded = max_marks): Bid explicitly states or clearly demonstrates compliance. "
+                "Examples: names an empanelment, quotes exact turnover/experience figures meeting the threshold, "
+                "references a specific certification (ISO, SOC), explicitly states 5+ years.\n"
+                "- 'Partial' (marks_awarded = max_marks / 2): Bid implies or partially addresses the requirement. "
+                "Examples: company name present (implies registration), GenAI work referenced without exact case count, "
+                "cloud services mentioned without empanelment proof, experience claimed without exact years/numbers.\n"
+                "- 'Not Met' (marks_awarded = 0): The criterion topic is completely absent from the bid — "
+                "no mention of the company, capability, certification, or any related term.\n\n"
+                "IMPORTANT: Do NOT mark 'Not Met' just because the bid lacks documentary proof. "
+                "Only mark 'Not Met' when the topic is truly not addressed at all."
+            )
+        else:
+            scoring_instruction = (
+                "This is a broad category assessment. Award 'Met' if the bid clearly addresses "
+                "this category, 'Partial' if the bid partially addresses it, 'Not Met' only if "
+                "completely absent."
+                if is_generic else
+                "IMPORTANT CONTEXT: This is a BID DOCUMENT evaluation, not post-event scoring. "
+                "For criteria that involve future scheduled events (presentations, demonstrations), "
+                "evaluate based on the vendor's PLAN and CAPABILITY evidence in the bid:\n"
+                "- 'Met': Vendor provides detailed plan/content AND has demonstrable live systems/capability. Set marks_awarded = max_marks.\n"
+                "- 'Partial': Vendor confirms participation but lacks detail or supporting capability evidence. Set marks_awarded = 50% of max_marks.\n"
+                "- 'Not Met': No mention of the criterion, or vendor explicitly cannot meet it. Set marks_awarded = 0.\n"
+                "Do NOT score 'Not Met' simply because the event has not yet occurred."
+                if is_future_event else
+                f"PASS/FAIL SCORING (today is {today}):\n"
+                "Evaluate each criterion as a simple binary check — there are no tiers.\n"
+                "- 'Met' (marks_awarded = max_marks): The bid clearly satisfies the requirement.\n"
+                "- 'Not Met' (marks_awarded = 0): The bid does not satisfy the requirement.\n"
+                "Do NOT invent tiers or partial credit. For numeric minimums (e.g. 'minimum 5 years'), "
+                "use today's date to calculate the duration and mark 'Met' if the vendor meets or exceeds it.\n"
+                "If the requirement is 'must include X' and the bid includes X, mark as Met."
+                if not rfp_scoring_text else
+                "TIERED SCORING INSTRUCTIONS:\n"
+                "Many criteria have tiered marks (e.g. 3+ BFSI cases = 10 marks, 2 cases = 6 marks, 1 case = 3 marks; "
+                "or 1000+ users = 10 marks, 100-999 users = 6 marks; "
+                "or 15+ implementations = 10 marks, 10-14 = 8 marks, 5-9 = 6 marks; "
+                "or 50%+ team with 2+ certs = 5 marks, 50%+ with 1 cert = 3 marks). "
+                "Read what the vendor ACTUALLY claims (number of cases, users, implementations, certification counts) "
+                "and award marks_awarded based on the appropriate tier — NOT simply max_marks for any evidence. "
+                "'Met' means the vendor clearly meets the HIGHEST tier. "
+                "'Partial' means the vendor meets a LOWER tier but not the highest. "
+                "'Not Met' means no qualifying evidence exists. "
+                "ALWAYS set marks_awarded to the specific tiered value that matches the vendor's evidence."
+            )
 
         # Append to every branch — LLMs (especially smaller ones) routinely invert
         # numeric comparisons. These explicit rules prevent the most common mistakes.
@@ -1001,9 +1021,16 @@ def stage4_calculate_scores(
         # Clamp to valid range
         ce.marks_awarded = max(0.0, min(ce.marks_awarded, ce.max_marks))
 
+        qual_type = cat_qual_map.get(ce.category, "")
         min_pct, source = cat_min_map.get(ce.category, (None, None))
         if ce.max_marks > 0:
-            if min_pct is not None:
+            # For PQ/TQ criteria: compliance is already set by Stage 3 using the lenient
+            # PQTQ prompt. Re-derive compliance_status from marks_awarded using 50% threshold
+            # (Met if >= 50% of max_marks, i.e. at least "Partial" tier).
+            if qual_type in ("PQ", "TQ"):
+                ce.compliance_status = "Met" if ce.marks_awarded >= ce.max_marks * 0.5 else "Not Met"
+                ce.threshold_logic = "PQ Pass/Fail"
+            elif min_pct is not None:
                 # Explicit per-category RFP minimum
                 threshold = ce.max_marks * (min_pct / 100)
                 ce.compliance_status = "Met" if ce.marks_awarded >= threshold else "Not Met"
@@ -1022,7 +1049,7 @@ def stage4_calculate_scores(
             ce.compliance_status = "Not Met"
             ce.threshold_logic = "N/A"
         # Propagate qualification_type from the parent category
-        ce.qualification_type = cat_qual_map.get(ce.category, "")
+        ce.qualification_type = qual_type
 
     # Third pass: aggregate into category results.
     category_results = []
@@ -1224,8 +1251,9 @@ async def _run_pipeline(
     rules: EvaluationRules,
     rfp_scoring_text: str = "",
     prebid_text: str = "",
+    pqtq_mode: bool = False,
 ) -> EvaluationReport:
-    criteria_evals      = await stage3_parse_vendor_response(bid_text, rules, rfp_scoring_text)
+    criteria_evals      = await stage3_parse_vendor_response(bid_text, rules, rfp_scoring_text, pqtq_mode=pqtq_mode)
     category_results    = stage4_calculate_scores(criteria_evals, rules)
     disqualifier_checks = await stage4b_check_disqualifiers(
         bid_text, rules.mandatory_disqualifiers
@@ -1321,13 +1349,34 @@ async def run_evaluation_with_rules(bid_text: str, rules: EvaluationRules) -> Ev
     return await _run_pipeline(bid_text, rules)
 
 
+_PQ_KEYWORDS = ["pre-qualif", "pre qualif", "prequalif", "eligib", "pq —", "pq-", " pq ", "(pq)", "annexure 2", "annex 2"]
+_TQ_KEYWORDS = ["technical qual", "technical eval", "tq —", "tq-", " tq ", "(tq)", "annexure 18", "annex 18", "technical criteria"]
+
+
 async def run_pqtq_evaluation(rfp_text: str, bid_text: str) -> EvaluationReport:
-    """Run evaluation scoped to Pre-Qualification / Technical Qualification criteria only."""
+    """Run evaluation scoped to Pre-Qualification / Technical Qualification criteria only.
+
+    Uses a lenient Stage 3 prompt that accepts implied/partial compliance — appropriate
+    for proposal documents where PQ evidence is often indirect rather than formally documented.
+    """
     if not _rfp_has_explicit_marks(rfp_text):
         print("[Pipeline-PQTQ] No explicit scoring marks found in RFP — raising NO_RULES_FOUND")
         raise ValueError("NO_RULES_FOUND")
     rules = await stage2_extract_pqtq_rules(rfp_text)
     if not rules.rules_found:
         raise ValueError("NO_RULES_FOUND")
+
+    # Tag each extracted category with its qualification type so Stage 4 applies
+    # the correct "PQ Pass/Fail" logic badge and lenient compliance threshold.
+    for cat in rules.scoring_categories:
+        if not cat.qualification_type:
+            name = cat.category.lower()
+            if any(k in name for k in _TQ_KEYWORDS):
+                cat.qualification_type = "TQ"
+            elif any(k in name for k in _PQ_KEYWORDS):
+                cat.qualification_type = "PQ"
+            else:
+                cat.qualification_type = "PQ"  # default: treat as PQ in PQTQ mode
+
     rfp_scoring_text = _extract_scoring_sections(rfp_text, MAX_RFP_CHARS)
-    return await _run_pipeline(bid_text, rules, rfp_scoring_text)
+    return await _run_pipeline(bid_text, rules, rfp_scoring_text, pqtq_mode=True)
