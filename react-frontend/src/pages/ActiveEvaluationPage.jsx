@@ -50,8 +50,25 @@ function weightBadge(w) {
   return <span className={`badge ${map[w] || 'badge-weight-medium'}`} style={{ fontSize: '0.7rem' }}>{w}</span>
 }
 
+function qualBadge(qt) {
+  if (!qt) return null
+  const isPQ = qt === 'PQ'
+  return (
+    <span style={{
+      display: 'inline-block', fontSize: '0.6rem', fontWeight: 800,
+      padding: '1px 6px', borderRadius: 4, marginLeft: 5,
+      background: isPQ ? '#FEF3C7' : '#EDE9FE',
+      color: isPQ ? '#92400E' : '#5B21B6',
+      border: `1px solid ${isPQ ? '#FDE68A' : '#DDD6FE'}`,
+      letterSpacing: '0.04em', verticalAlign: 'middle',
+    }}>
+      {qt}
+    </span>
+  )
+}
+
 /* ── Vendor Card ────────────────────────────────────────────────────────── */
-function VendorCard({ vendor }) {
+function VendorCard({ vendor, pqChecks = [] }) {
   return (
     <div style={{
       background: '#fff', borderRadius: 12, padding: '1.5rem',
@@ -80,29 +97,72 @@ function VendorCard({ vendor }) {
         <div style={{ fontSize: '0.78rem', color: '#6B7280', marginTop: 4 }}>Overall Score</div>
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        {vendor.categories.map(cat => (
-          <div key={cat.name}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-              <span style={{ fontSize: '0.8rem', color: '#374151' }}>{cat.name}</span>
-              <span style={{ fontSize: '0.72rem', fontWeight: 700, padding: '1px 8px', borderRadius: 4, background: '#EEF2FF', color: '#4F46E5' }}>
-                {cat.score}/100
-              </span>
-            </div>
-            <div style={{ height: 6, background: '#E5E7EB', borderRadius: 999, overflow: 'hidden' }}>
-              <div style={{ height: '100%', borderRadius: 999, background: cat.color, width: `${cat.score}%`, transition: 'width .8s' }} />
-            </div>
+      {/* PQ — Pre-Qualification checks */}
+      {pqChecks.length > 0 && (
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ fontSize: '0.68rem', fontWeight: 700, color: '#92400E', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
+            {qualBadge('PQ')} Pre-Qualification
           </div>
-        ))}
-      </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+            {pqChecks.map((chk, i) => (
+              <div key={i} style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8, padding: '5px 8px', borderRadius: 6, background: chk.met ? '#F0FDF4' : '#FFF1F2', border: `1px solid ${chk.met ? '#BBF7D0' : '#FECDD3'}` }}>
+                <span style={{ fontSize: '0.75rem', color: '#374151', flex: 1 }}>{chk.condition}</span>
+                <span style={{ fontSize: '0.7rem', fontWeight: 700, flexShrink: 0, color: chk.met ? '#15803D' : '#DC2626' }}>
+                  {chk.met ? '✓ Pass' : '✗ Fail'}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* TQ — Technical Qualification scored categories */}
+      {vendor.categories.length > 0 && (
+        <div>
+          {pqChecks.length > 0 && (
+            <div style={{ fontSize: '0.68rem', fontWeight: 700, color: '#5B21B6', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
+              {qualBadge('TQ')} Technical Qualification
+            </div>
+          )}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {vendor.categories.map(cat => (
+              <div key={cat.name}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                  <span style={{ fontSize: '0.8rem', color: '#374151' }}>{cat.name}{cat.qualification_type && !pqChecks.length ? qualBadge(cat.qualification_type) : null}</span>
+                  <span style={{ fontSize: '0.72rem', fontWeight: 700, padding: '1px 8px', borderRadius: 4, background: '#EEF2FF', color: '#4F46E5' }}>
+                    {cat.score}/100
+                  </span>
+                </div>
+                <div style={{ height: 6, background: '#E5E7EB', borderRadius: 999, overflow: 'hidden' }}>
+                  <div style={{ height: '100%', borderRadius: 999, background: cat.color, width: `${cat.score}%`, transition: 'width .8s' }} />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
 
 /* ── Requirements Table ─────────────────────────────────────────────────── */
-function RequirementsTable({ criteria }) {
+function RequirementsTable({ criteria, pqChecks = [] }) {
   const [filter, setFilter] = useState('all')
-  const filtered = filter === 'all' ? criteria : criteria.filter(c => c.v1 === filter)
+
+  const pqRows = pqChecks.map(chk => ({
+    name: chk.condition,
+    category: 'Pre-Qualification',
+    weight: 'Critical',
+    v1: chk.met ? 'Met' : 'Not Met',
+    threshold_logic: 'PQ Pass/Fail',
+    justification: chk.note || '',
+    qualification_type: 'PQ',
+    isPQ: true,
+    met: chk.met,
+  }))
+
+  const allRows = [...pqRows, ...criteria]
+  const filtered = filter === 'all' ? allRows : allRows.filter(c => c.v1 === filter)
 
   return (
     <div className="card" style={{ padding: 0, overflow: 'hidden', marginBottom: '1.5rem' }}>
@@ -135,9 +195,11 @@ function RequirementsTable({ criteria }) {
           </thead>
           <tbody>
             {filtered.map((c, i) => (
-              <tr key={i}>
+              <tr key={i} style={{ background: c.isPQ ? (c.met ? '#FEFCE8' : '#FFF7F7') : undefined }}>
                 <td>
-                  <div style={{ fontWeight: 600, fontSize: '0.875rem', color: '#111827' }}>{c.name}</div>
+                  <div style={{ fontWeight: 600, fontSize: '0.875rem', color: '#111827' }}>
+                    {c.name}{qualBadge(c.qualification_type)}
+                  </div>
                   {c.justification && (
                     <div style={{ fontSize: '0.7rem', color: '#9CA3AF', marginTop: 2 }}>{c.justification.slice(0, 80)}{c.justification.length > 80 ? '…' : ''}</div>
                   )}
@@ -146,7 +208,9 @@ function RequirementsTable({ criteria }) {
                 <td>{weightBadge(c.weight)}</td>
                 <td>{statusBadge(c.v1)}</td>
                 <td>{logicBadge(c.threshold_logic)}</td>
-                <td style={{ fontWeight: 700, color: '#4F46E5', fontSize: '0.85rem' }}>{c.marks_awarded}/{c.max_marks}</td>
+                <td style={{ fontWeight: 700, fontSize: '0.85rem', color: c.isPQ ? (c.met ? '#15803D' : '#DC2626') : '#4F46E5' }}>
+                  {c.isPQ ? (c.met ? 'Pass' : 'Fail') : `${c.marks_awarded}/${c.max_marks}`}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -241,6 +305,7 @@ export default function ActiveEvaluationPage() {
       name: cr.category,
       score: Math.round(cr.percent_achieved),
       color: COLORS[i % COLORS.length],
+      qualification_type: cr.qualification_type || '',
     })),
   }
 
@@ -259,6 +324,7 @@ export default function ActiveEvaluationPage() {
       marks_awarded: c.marks_awarded,
       max_marks: c.max_marks,
       threshold_logic: c.threshold_logic || '50% Fallback',
+      qualification_type: c.qualification_type || '',
     }
   })
 
@@ -430,7 +496,7 @@ export default function ActiveEvaluationPage() {
       {/* Vendor Card */}
       <div style={{ marginBottom: '1.75rem' }}>
         <h2 style={{ fontWeight: 700, fontSize: '1.05rem', color: '#111827', marginBottom: '1.25rem' }}>Vendor Evaluation</h2>
-        <VendorCard vendor={vendor} />
+        <VendorCard vendor={vendor} pqChecks={report.disqualifier_checks || []} />
       </div>
 
       {/* Pass Criteria Breakdown */}
@@ -536,7 +602,7 @@ export default function ActiveEvaluationPage() {
       </div>
 
       {/* Requirements Assessment */}
-      <RequirementsTable criteria={criteria} />
+      <RequirementsTable criteria={criteria} pqChecks={report.disqualifier_checks || []} />
 
       {/* Pre-Bid Q&A Clarifications */}
       {report.prebid_qa?.length > 0 && (

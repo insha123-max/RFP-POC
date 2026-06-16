@@ -36,6 +36,13 @@ function stripExt(name) {
   return name ? name.replace(/\.[^.]+$/, '') : '—'
 }
 
+function getEvalType(entry) {
+  if (entry.evaluationType) return entry.evaluationType
+  const cats = entry.report?.category_results || []
+  const hasPQTQ = cats.some(cr => cr.qualification_type === 'PQ' || cr.qualification_type === 'TQ')
+  return hasPQTQ ? 'PQTQ' : 'General'
+}
+
 /* ── Sub-components ─────────────────────────────────────────────────────── */
 function StatCard({ label, rawValue, suffix = '', sub, icon, valueColor }) {
   const counted = useCountUp(rawValue ?? 0)
@@ -73,6 +80,15 @@ function EvalCard({ entry, onView, onReport, onDelete }) {
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 4 }}>
         <h3 style={{ fontWeight: 700, fontSize: '0.95rem', color: '#111827', marginRight: 12, flex: 1 }}>{stripExt(entry.rfpName)}</h3>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+          {getEvalType(entry) === 'PQTQ' ? (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 999, fontSize: '0.68rem', fontWeight: 700, background: '#EDE9FE', color: '#6D28D9', border: '1px solid #C4B5FD' }}>
+              PQ/TQ
+            </span>
+          ) : (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 999, fontSize: '0.68rem', fontWeight: 700, background: '#E0F2FE', color: '#0369A1', border: '1px solid #BAE6FD' }}>
+              General
+            </span>
+          )}
           <span className={`badge ${entry.passed ? 'badge-low' : 'badge-high'}`}>
             {entry.passed ? '✓ Passed' : '✗ Failed'}
           </span>
@@ -358,8 +374,13 @@ export default function DashboardPage() {
                   <span className={`dot ${entry.passed ? 'dot-green' : 'dot-amber'}`} />
                 </div>
                 <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 600, fontSize: '0.875rem', color: '#111827' }}>
+                  <div style={{ fontWeight: 600, fontSize: '0.875rem', color: '#111827', display: 'flex', alignItems: 'center', gap: 6 }}>
                     Evaluation {entry.passed ? 'passed' : 'failed'}
+                    <span style={{ padding: '1px 6px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700,
+                      background: getEvalType(entry) === 'PQTQ' ? '#EDE9FE' : '#E0F2FE',
+                      color: getEvalType(entry) === 'PQTQ' ? '#6D28D9' : '#0369A1' }}>
+                      {getEvalType(entry) === 'PQTQ' ? 'PQ/TQ' : 'General'}
+                    </span>
                   </div>
                   <div style={{ fontSize: '0.78rem', color: '#6B7280' }}>
                     {stripExt(entry.rfpName)} — {stripExt(entry.bidName)} scored {entry.score}%

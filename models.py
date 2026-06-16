@@ -13,6 +13,7 @@ class ScoringCategory(BaseModel):
     max_marks: float
     weight_percent: float
     subcriteria: List[SubCriterion] = []
+    qualification_type: str = ""  # "PQ", "TQ", or "" for standard evaluations
 
 
 class CategoryMinimum(BaseModel):
@@ -44,6 +45,7 @@ class CriterionEvaluation(BaseModel):
     justification: str
     is_mandatory: bool = False
     threshold_logic: str = ""  # "RFP Min (X%)" or "50% Fallback"
+    qualification_type: str = ""  # "PQ", "TQ", or "" for standard evaluations
 
 
 class CategoryResult(BaseModel):
@@ -56,6 +58,7 @@ class CategoryResult(BaseModel):
     passed: bool
     minimum_required: Optional[float] = None
     criteria: List[CriterionEvaluation] = []
+    qualification_type: str = ""  # "PQ", "TQ", or "" for standard evaluations
 
 
 class DisqualifierCheck(BaseModel):

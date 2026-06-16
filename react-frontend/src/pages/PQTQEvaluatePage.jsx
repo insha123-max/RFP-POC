@@ -351,6 +351,7 @@ export default function PQTQEvaluatePage() {
       timestamp: new Date().toISOString(),
       score: Math.round((report.total_score / report.max_score) * 100),
       passed: report.passed,
+      evaluationType: 'PQTQ',
     })
     setTimeout(() => navigate('/active-evaluation'), 500)
   }

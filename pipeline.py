@@ -392,8 +392,12 @@ def _rfp_pqtq_prompt(chunk: str) -> str:
         f"RULE 2: subcriteria must be a FLAT list — no nesting.\n"
         f"RULE 3: Preserve exact criterion names and prefixes as they appear in the document.\n"
         f"RULE 4: Set mandatory=true only when the document explicitly says mandatory/compulsory/must-meet.\n\n"
+        f"QUALIFICATION TYPE TAGGING:\n"
+        f"  For each extracted category, set qualification_type to exactly one of:\n"
+        f"  - \"PQ\" if the category belongs to Pre-Qualification / Eligibility Criteria sections\n"
+        f"  - \"TQ\" if the category belongs to Technical Qualification / Technical Evaluation sections\n\n"
         f"Return ONLY JSON:\n"
-        f'{{"rules_found":true,"scoring_categories":[{{"category":"Category Name","max_marks":70,"weight_percent":70,'
+        f'{{"rules_found":true,"scoring_categories":[{{"category":"Category Name","max_marks":70,"weight_percent":70,"qualification_type":"PQ",'
         f'"subcriteria":[{{"criterion":"Sub-Criterion Name","max_marks":20,"mandatory":false}}]}}],'
         f'"threshold":{{"overall_pass_mark":70,"category_minimums":[]}},"mandatory_disqualifiers":[]}}\n\n'
         f"If no explicit numeric marks exist for PQ/TQ criteria in this text: "
@@ -760,6 +764,7 @@ async def stage2_extract_pqtq_rules(rfp_text: str) -> EvaluationRules:
                 max_marks=m,
                 weight_percent=w,
                 subcriteria=subcriteria_list,
+                qualification_type=str(c.get("qualification_type", "") or ""),
             )
         )
 
@@ -980,6 +985,9 @@ def stage4_calculate_scores(
                 break
         cat_min_map[cat.category] = (min_pct, source)
 
+    # Build a category → qualification_type map from rules
+    cat_qual_map: dict = {cat.category: cat.qualification_type for cat in rules.scoring_categories}
+
     # Second pass: fix marks then set compliance status + threshold_logic per criterion.
     for ce in criteria_evals:
         # If LLM said Met but gave no valid marks, award full marks
@@ -1008,6 +1016,8 @@ def stage4_calculate_scores(
         else:
             ce.compliance_status = "Not Met"
             ce.threshold_logic = "N/A"
+        # Propagate qualification_type from the parent category
+        ce.qualification_type = cat_qual_map.get(ce.category, "")
 
     # Third pass: aggregate into category results.
     category_results = []
@@ -1034,6 +1044,7 @@ def stage4_calculate_scores(
                 passed=cat_passed,
                 minimum_required=min_pct,
                 criteria=cat_criteria,
+                qualification_type=cat.qualification_type,
             )
         )
 
@@ -1058,10 +1069,10 @@ async def stage4b_check_disqualifiers(
 
 IMPORTANT RULES:
 - For document submission requirements (e.g. "Submission of Bank Guarantee required", "Power of Attorney"),
-  set met=true if the vendor mentions submitting or enclosing it, OR if the bid includes such documents.
-  Set met=false ONLY if the vendor explicitly states they are NOT providing it.
-- For eligibility criteria, set met=true if evidence exists in the bid.
-- Default to met=true when evidence is unclear — only flag met=false on clear non-compliance.
+  set met=true ONLY if the vendor explicitly mentions submitting or enclosing it, OR the bid clearly includes it.
+  Set met=false if the document is not mentioned at all, or if the vendor states they are NOT providing it.
+- For eligibility criteria, set met=true ONLY if clear, explicit evidence exists in the bid.
+- Default to met=false when evidence is unclear, absent, or insufficient — only mark met=true on clear compliance.
 
 VENDOR BID (relevant sections):
 {relevant_bid}
@@ -1074,7 +1085,7 @@ Return ONLY a JSON array:
   {{
     "condition": "<exact requirement text>",
     "met": true,
-    "note": "<evidence from bid, or 'Not mentioned but no explicit refusal'>"
+    "note": "<evidence from bid confirming compliance, or 'Not mentioned in bid — defaulting to Fail'>"
   }}
 ]"""
 

@@ -597,6 +597,7 @@ export default function EvaluatePage() {
       timestamp: new Date().toISOString(),
       score: Math.round((report.total_score / report.max_score) * 100),
       passed: report.passed,
+      evaluationType: 'General',
     })
     setTimeout(() => navigate('/active-evaluation'), 500)
   }
