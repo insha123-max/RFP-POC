@@ -19,27 +19,26 @@ const NAV = [
   { to: '/analytics',          label: 'Analytics',         icon: 'M18 20V10M12 20V4M6 20v-6' },
 ]
 
-export default function Sidebar() {
+export default function Sidebar({ open, onToggle }) {
   const { report } = useEvaluation()
-  const score = report ? Math.round((report.total_score / report.max_score) * 100) : 94
 
   const navCls = ({ isActive }) => `nav-item${isActive ? ' active' : ''}`
 
   return (
     <aside className="sidebar">
-      <NavLink to="/" className="sidebar-logo" style={{ textDecoration: 'none', cursor: 'pointer' }}>
-        <img src="/logo.png" alt="BidEval AI" style={{ width: 38, height: 38, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
-        <div>
-          <div className="sidebar-logo-text">BidEval AI</div>
-          <div className="sidebar-logo-sub">Procurement Platform</div>
-        </div>
-      </NavLink>
+      {/* Circular collapse/expand button on the right edge */}
+      <button className="sidebar-edge-btn" onClick={onToggle} title={open ? 'Collapse sidebar' : 'Expand sidebar'}>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+          style={{ transform: open ? 'rotate(0deg)' : 'rotate(180deg)', transition: 'transform .25s ease' }}>
+          <polyline points="15 18 9 12 15 6" />
+        </svg>
+      </button>
 
       <nav className="sidebar-nav">
         {NAV.map(({ to, end, label, icon }) => (
-          <NavLink key={to} to={to} end={end} className={navCls}>
+          <NavLink key={to} to={to} end={end} className={navCls} title={!open ? label : undefined}>
             <Icon d={icon} />
-            {label}
+            <span className="nav-label">{label}</span>
           </NavLink>
         ))}
       </nav>
@@ -55,7 +54,7 @@ export default function Sidebar() {
               <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z"/>
             </svg>
           </div>
-          <div>
+          <div className="nav-label">
             <div style={{ fontSize: '0.8rem', fontWeight: 600, color: 'rgba(255,255,255,.75)', lineHeight: 1.2 }}>BidEval AI</div>
             <div style={{ fontSize: '0.7rem', color: 'rgba(255,255,255,.3)', marginTop: 1 }}>v1.0 · Powered by Groq</div>
           </div>
