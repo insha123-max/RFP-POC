@@ -42,6 +42,18 @@ export async function runPQTQEvaluation(rfpFile, bidFiles, extraRfpFiles = []) {
   return res.json()
 }
 
+export async function fetchBidReadiness(rfpFile, additionalFile = null) {
+  const form = new FormData()
+  form.append('rfp_file', rfpFile)
+  if (additionalFile) form.append('additional_file', additionalFile)
+  const res = await fetch(`${BASE}/bid-readiness`, { method: 'POST', body: form })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(err.detail || 'Extraction failed')
+  }
+  return res.json()
+}
+
 export async function applyOverride(report, overrides) {
   const res = await fetch(`${BASE}/override`, {
     method: 'POST',

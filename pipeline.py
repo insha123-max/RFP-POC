@@ -11,8 +11,10 @@ from dotenv import load_dotenv
 from groq import AsyncGroq
 
 from models import (
+    BidReadinessResult,
     CategoryMinimum,
     CategoryResult,
+    ChecklistItem,
     CriterionEvaluation,
     DisqualifierCheck,
     EvaluationReport,
@@ -1380,3 +1382,135 @@ async def run_pqtq_evaluation(rfp_text: str, bid_text: str) -> EvaluationReport:
 
     rfp_scoring_text = _extract_scoring_sections(rfp_text, MAX_RFP_CHARS)
     return await _run_pipeline(bid_text, rules, rfp_scoring_text, pqtq_mode=True)
+
+
+# ---------------------------------------------------------------------------
+# Bid Readiness — extract PQ/TQ checklist in plain English (no bid needed)
+# ---------------------------------------------------------------------------
+
+def _bid_readiness_prompt(text: str) -> str:
+    return (
+        f"You are a procurement expert helping a vendor understand an RFP/tender.\n\n"
+        f"Analyse the document below and extract ALL Pre-Qualification (PQ) eligibility "
+        f"conditions and Technical Qualification (TQ) scored criteria.\n\n"
+        f"DOCUMENT:\n{text}\n\n"
+        f"=== OUTPUT RULES ===\n\n"
+        f"PART A — PQ_CRITERIA (mandatory eligibility, pass/fail, NO marks attached):\n"
+        f"  • Rewrite each requirement in plain English that a business executive understands.\n"
+        f"  • Write the criterion as a short, direct statement (≤20 words).\n"
+        f"  • Write the detail as a fuller explanation with specific numbers/documents required.\n"
+        f"  • One entry per requirement — do NOT merge multiple conditions.\n"
+        f"  • Include: financial thresholds, EMD/bid security, registrations, experience minimums,\n"
+        f"    certifications, team/staff minimums, Make-in-India, blacklisting declarations.\n"
+        f"  • Do NOT include scoring thresholds (like 'must score 70%') — those are TQ rules.\n"
+        f"  • Example criterion: \"Minimum average annual turnover of Rs. 50 crores over last 3 years\"\n"
+        f"  • Example detail: \"CA-certified audited balance sheets for FY 2022-23, 2023-24, 2024-25 required\"\n\n"
+        f"PART B — TQ_CRITERIA (scored criteria with explicit marks/points):\n"
+        f"  • Extract only criteria with explicit numeric marks/scores/weightage.\n"
+        f"  • Rewrite each in plain English showing exactly what earns the marks.\n"
+        f"  • Include the score threshold tiers if they exist (e.g. '10+ cases = 20 marks, 5-9 = 10 marks').\n"
+        f"  • Group by their original category name.\n"
+        f"  • Example criterion: \"10 or more production GenAI implementations in your organisation\"\n"
+        f"  • Example detail: \"Must be live deployments (not POCs). Client performance certificates needed. Earns 20 marks.\"\n\n"
+        f"Return ONLY valid JSON — no markdown, no commentary:\n"
+        f'{{"pq_criteria":['
+        f'{{"category":"Financial","criterion":"<plain English>","detail":"<explanation>"}}],'
+        f'"tq_criteria":['
+        f'{{"category":"GenAI Experience","criterion":"<plain English>","detail":"<explanation with score tiers>","max_score":20}}]}}'
+    )
+
+
+async def extract_bid_readiness_checklist(
+    rfp_text: str, additional_text: str = ""
+) -> BidReadinessResult:
+    """Extract PQ/TQ criteria from RFP as a plain-English self-assessment checklist."""
+    combined = rfp_text
+    if additional_text.strip():
+        combined = rfp_text + "\n\n=== ADDITIONAL DOCUMENT ===\n\n" + additional_text
+
+    # Build multiple chunks — same strategy as stage2_extract_rules so scoring
+    # tables deep in the document are not missed.
+    keyword_text  = _extract_scoring_sections(combined, MAX_RFP_CHARS)
+    scoring_start = _find_scoring_section_start(combined)
+
+    chunks: list[str] = [keyword_text]
+    if scoring_start >= 0:
+        for i in range(1, 4):
+            chunk_start = scoring_start + i * MAX_RFP_CHARS
+            if chunk_start < len(combined):
+                chunks.append(combined[chunk_start: chunk_start + MAX_RFP_CHARS])
+    else:
+        for start in range(0, min(len(combined), MAX_RFP_CHARS * 4), MAX_RFP_CHARS):
+            chunks.append(combined[start: start + MAX_RFP_CHARS])
+
+    chunks = [c for c in chunks if c.strip()][:5]
+
+    # Collect and de-duplicate across chunks
+    seen_pq: set[str] = set()
+    seen_tq: set[str] = set()
+    raw_pq: list[dict] = []
+    raw_tq: list[dict] = []
+
+    for chunk in chunks:
+        try:
+            data = _parse_object(await _call(_bid_readiness_prompt(chunk)))
+        except Exception:
+            continue
+
+        for item in (data.get("pq_criteria") or []):
+            if not isinstance(item, dict):
+                continue
+            key = str(item.get("criterion", "")).strip().lower()[:80]
+            if key and key not in seen_pq:
+                seen_pq.add(key)
+                raw_pq.append(item)
+
+        for item in (data.get("tq_criteria") or []):
+            if not isinstance(item, dict):
+                continue
+            key = str(item.get("criterion", "")).strip().lower()[:80]
+            if key and key not in seen_tq:
+                seen_tq.add(key)
+                raw_tq.append(item)
+
+    pq_items: List[ChecklistItem] = []
+    for i, item in enumerate(raw_pq):
+        criterion = str(item.get("criterion", "")).strip()
+        if not criterion:
+            continue
+        pq_items.append(ChecklistItem(
+            id=f"pq_{i}",
+            type="PQ",
+            category=str(item.get("category", "Eligibility")).strip(),
+            criterion=criterion,
+            detail=str(item.get("detail", "")).strip(),
+            max_score=0.0,
+            is_mandatory=True,
+        ))
+
+    tq_items: List[ChecklistItem] = []
+    total_tq = 0.0
+    for i, item in enumerate(raw_tq):
+        criterion = str(item.get("criterion", "")).strip()
+        if not criterion:
+            continue
+        try:
+            score = float(item.get("max_score", 0) or 0)
+        except (TypeError, ValueError):
+            score = 0.0
+        total_tq += score
+        tq_items.append(ChecklistItem(
+            id=f"tq_{i}",
+            type="TQ",
+            category=str(item.get("category", "Technical")).strip(),
+            criterion=criterion,
+            detail=str(item.get("detail", "")).strip(),
+            max_score=score,
+            is_mandatory=False,
+        ))
+
+    return BidReadinessResult(
+        pq_items=pq_items,
+        tq_items=tq_items,
+        total_tq_score=round(total_tq, 2),
+    )

@@ -5,7 +5,7 @@ import { useEvaluation } from '../context/EvaluationContext'
 const PAGE_LABELS = {
   '/':                   'Dashboard',
   '/evaluate':           'New Evaluation',
-  '/pqtq-evaluation':    'PQTQ Evaluation',
+  '/bid-readiness':      'Bid Readiness',
   '/active-evaluation':  'Active Evaluation',
   '/vendor-analysis':    'Vendor Analysis',
   '/executive-report':   'Executive Report',

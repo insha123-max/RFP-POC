@@ -94,6 +94,22 @@ class EvaluationReport(BaseModel):
     prebid_applied: bool = False
 
 
+class ChecklistItem(BaseModel):
+    id: str
+    type: str           # "PQ" or "TQ"
+    category: str
+    criterion: str      # plain-English requirement
+    detail: str         # fuller explanation
+    max_score: float = 0.0   # 0 for PQ items
+    is_mandatory: bool = False
+
+
+class BidReadinessResult(BaseModel):
+    pq_items: List[ChecklistItem]
+    tq_items: List[ChecklistItem]
+    total_tq_score: float
+
+
 class OverrideEntry(BaseModel):
     category: str
     criterion: str
