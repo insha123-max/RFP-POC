@@ -293,7 +293,7 @@ export default function BidReadinessPage() {
       {/* ── Page header ── */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem', flexWrap: 'wrap', gap: 8 }}>
         <div>
-          <div style={{ fontSize: '1.25rem', fontWeight: 800, color: '#111827' }}>Bid Readiness Checklist</div>
+          <div style={{ fontSize: '1.25rem', fontWeight: 800, color: '#111827' }}>PQTQ Checklist</div>
           <div style={{ fontSize: '0.75rem', color: '#9CA3AF', marginTop: 2 }}>
             {rfpFile?.name} &nbsp;·&nbsp; {result.pq_items.length} PQ criteria &nbsp;·&nbsp; {result.tq_items.length} TQ criteria
           </div>
