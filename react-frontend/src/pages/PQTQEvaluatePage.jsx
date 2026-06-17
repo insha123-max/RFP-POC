@@ -408,6 +408,136 @@ function StepCard({ step, state }) {
   )
 }
 
+/* ── Custom PQ/TQ adder helpers ───────────────────────────────────────────── */
+const mkPQItem  = () => ({ id: Date.now() + Math.random(), name: '' })
+const mkTQCrit  = () => ({ id: Date.now() + Math.random(), name: '', marks: 10 })
+const mkTQCat   = () => ({ id: Date.now() + Math.random(), category: '', criteria: [mkTQCrit()] })
+
+function CustomPQTQPanel({ pqItems, tqCats, onPQ, onTQ }) {
+  const inp = { padding: '0.4rem 0.7rem', border: '1px solid #E2E8F0', borderRadius: 6, fontSize: '0.82rem', color: '#1E293B', outline: 'none', background: '#fff', width: '100%', boxSizing: 'border-box' }
+
+  // PQ handlers
+  const addPQ    = () => onPQ([...pqItems, mkPQItem()])
+  const removePQ = id => onPQ(pqItems.filter(p => p.id !== id))
+  const setPQ    = (id, name) => onPQ(pqItems.map(p => p.id === id ? { ...p, name } : p))
+
+  // TQ handlers
+  const addCat       = () => onTQ([...tqCats, mkTQCat()])
+  const removeCat    = id => onTQ(tqCats.filter(c => c.id !== id))
+  const setCatName   = (id, category) => onTQ(tqCats.map(c => c.id === id ? { ...c, category } : c))
+  const addCrit      = catId => onTQ(tqCats.map(c => c.id === catId ? { ...c, criteria: [...c.criteria, mkTQCrit()] } : c))
+  const removeCrit   = (catId, critId) => onTQ(tqCats.map(c => c.id === catId ? { ...c, criteria: c.criteria.filter(cr => cr.id !== critId) } : c))
+  const setCritField = (catId, critId, patch) => onTQ(tqCats.map(c => c.id === catId ? { ...c, criteria: c.criteria.map(cr => cr.id === critId ? { ...cr, ...patch } : cr) } : c))
+
+  return (
+    <div>
+      {/* PQ section */}
+      <div style={{ marginBottom: '1.25rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: '0.75rem' }}>
+          <span style={{ background: '#FEF3C7', color: '#92400E', border: '1px solid #FDE68A', borderRadius: 4, padding: '2px 8px', fontSize: '0.65rem', fontWeight: 800 }}>PQ</span>
+          <span style={{ fontWeight: 700, fontSize: '0.875rem', color: '#1E293B' }}>Pre-Qualification Requirements</span>
+          <span style={{ fontSize: '0.72rem', color: '#94A3B8' }}>— mandatory pass/fail conditions</span>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {pqItems.map((p, i) => (
+            <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: '0.68rem', color: '#CBD5E1', width: 16, flexShrink: 0 }}>{i + 1}.</span>
+              <input
+                placeholder="e.g. Minimum 3 years of experience in cloud solutions"
+                value={p.name}
+                onChange={e => setPQ(p.id, e.target.value)}
+                style={inp}
+                onFocus={e => e.target.style.borderColor = '#FDE68A'}
+                onBlur={e => e.target.style.borderColor = '#E2E8F0'}
+              />
+              <span style={{ background: '#FEF3C7', color: '#92400E', borderRadius: 4, padding: '2px 6px', fontSize: '0.6rem', fontWeight: 800, flexShrink: 0 }}>MANDATORY</span>
+              {pqItems.length > 1 && (
+                <button onClick={() => removePQ(p.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#CBD5E1', fontSize: '1rem', lineHeight: 1, padding: '2px 4px', flexShrink: 0, fontWeight: 700 }}
+                  onMouseEnter={e => e.target.style.color = '#EF4444'} onMouseLeave={e => e.target.style.color = '#CBD5E1'}>×</button>
+              )}
+            </div>
+          ))}
+        </div>
+        <button onClick={addPQ} style={{ marginTop: 8, background: 'none', border: '1px dashed #FDE68A', borderRadius: 6, padding: '0.3rem 0.85rem', cursor: 'pointer', color: '#92400E', fontSize: '0.75rem', fontWeight: 600, transition: 'all .15s' }}
+          onMouseEnter={e => { e.currentTarget.style.background = '#FFFBEB' }} onMouseLeave={e => { e.currentTarget.style.background = 'none' }}>
+          + Add PQ Requirement
+        </button>
+      </div>
+
+      {/* Divider */}
+      <div style={{ borderTop: '1px dashed #E2E8F0', marginBottom: '1.25rem' }} />
+
+      {/* TQ section */}
+      <div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: '0.75rem' }}>
+          <span style={{ background: '#EDE9FE', color: '#5B21B6', border: '1px solid #DDD6FE', borderRadius: 4, padding: '2px 8px', fontSize: '0.65rem', fontWeight: 800 }}>TQ</span>
+          <span style={{ fontWeight: 700, fontSize: '0.875rem', color: '#1E293B' }}>Technical Qualification Criteria</span>
+          <span style={{ fontSize: '0.72rem', color: '#94A3B8' }}>— scored criteria with marks</span>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+          {tqCats.map((cat, ci) => (
+            <div key={cat.id} style={{ border: '1px solid #E2E8F0', borderRadius: 8, overflow: 'hidden' }}>
+              {/* Category header row */}
+              <div style={{ background: '#F8FAFC', padding: '0.5rem 0.875rem', borderBottom: '1px solid #E2E8F0', display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div style={{ width: 20, height: 20, borderRadius: 5, background: ACCENT, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.6rem', fontWeight: 800, flexShrink: 0 }}>{ci + 1}</div>
+                <input
+                  placeholder="Category name (e.g. Technical Experience)"
+                  value={cat.category}
+                  onChange={e => setCatName(cat.id, e.target.value)}
+                  style={{ ...inp, fontWeight: 600 }}
+                  onFocus={e => e.target.style.borderColor = ACCENT_MID}
+                  onBlur={e => e.target.style.borderColor = '#E2E8F0'}
+                />
+                {tqCats.length > 1 && (
+                  <button onClick={() => removeCat(cat.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#CBD5E1', fontSize: '1rem', lineHeight: 1, padding: '2px 4px', flexShrink: 0, fontWeight: 700 }}
+                    onMouseEnter={e => e.target.style.color = '#EF4444'} onMouseLeave={e => e.target.style.color = '#CBD5E1'}>×</button>
+                )}
+              </div>
+              {/* Criteria rows */}
+              <div style={{ padding: '0.625rem 0.875rem', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {cat.criteria.map((cr, cri) => (
+                  <div key={cr.id} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ fontSize: '0.65rem', color: '#CBD5E1', width: 14, flexShrink: 0 }}>{cri + 1}.</span>
+                    <input
+                      placeholder={`Criterion ${cri + 1} (e.g. Production GenAI deployments)`}
+                      value={cr.name}
+                      onChange={e => setCritField(cat.id, cr.id, { name: e.target.value })}
+                      style={{ ...inp, flex: 1 }}
+                      onFocus={e => e.target.style.borderColor = ACCENT_MID}
+                      onBlur={e => e.target.style.borderColor = '#E2E8F0'}
+                    />
+                    <input
+                      type="number" min="1" max="999"
+                      value={cr.marks}
+                      onChange={e => setCritField(cat.id, cr.id, { marks: Number(e.target.value) })}
+                      style={{ ...inp, width: 52, textAlign: 'center', flexShrink: 0 }}
+                      title="Max marks"
+                    />
+                    <span style={{ fontSize: '0.68rem', color: '#94A3B8', flexShrink: 0 }}>pts</span>
+                    {cat.criteria.length > 1 && (
+                      <button onClick={() => removeCrit(cat.id, cr.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#CBD5E1', fontSize: '1rem', lineHeight: 1, padding: '2px', flexShrink: 0, fontWeight: 700 }}
+                        onMouseEnter={e => e.target.style.color = '#EF4444'} onMouseLeave={e => e.target.style.color = '#CBD5E1'}>×</button>
+                    )}
+                  </div>
+                ))}
+                <button onClick={() => addCrit(cat.id)} style={{ alignSelf: 'flex-start', marginTop: 2, background: 'none', border: '1px dashed #CBD5E1', borderRadius: 6, padding: '0.25rem 0.65rem', cursor: 'pointer', color: '#94A3B8', fontSize: '0.72rem', fontWeight: 600, transition: 'all .15s' }}
+                  onMouseEnter={e => { e.currentTarget.style.borderColor = ACCENT_MID; e.currentTarget.style.color = ACCENT }} onMouseLeave={e => { e.currentTarget.style.borderColor = '#CBD5E1'; e.currentTarget.style.color = '#94A3B8' }}>
+                  + Add Criterion
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+        <button onClick={addCat} style={{ marginTop: 8, width: '100%', padding: '0.5rem', border: '1.5px dashed #CBD5E1', borderRadius: 8, background: 'none', cursor: 'pointer', color: '#64748B', fontSize: '0.78rem', fontWeight: 600, transition: 'all .15s' }}
+          onMouseEnter={e => { e.currentTarget.style.borderColor = ACCENT_MID; e.currentTarget.style.color = ACCENT; e.currentTarget.style.background = ACCENT_LIGHT }}
+          onMouseLeave={e => { e.currentTarget.style.borderColor = '#CBD5E1'; e.currentTarget.style.color = '#64748B'; e.currentTarget.style.background = 'none' }}>
+          + Add TQ Category
+        </button>
+      </div>
+    </div>
+  )
+}
+
 export default function PQTQEvaluatePage() {
   const [rfpFile, setRfpFile]       = useState(null)
   const [bidFiles, setBidFiles]     = useState([])
@@ -416,6 +546,10 @@ export default function PQTQEvaluatePage() {
   const [phase, setPhase]           = useState('upload')  // upload | progress | no_rules | error
   const [stepStates, setStepStates] = useState(STEPS.map(() => 'pending'))
   const [error, setError]           = useState('')
+  // Custom PQ/TQ panel state
+  const [showCustom, setShowCustom] = useState(true)
+  const [customPQ, setCustomPQ]     = useState([mkPQItem()])
+  const [customTQ, setCustomTQ]     = useState([mkTQCat()])
   const { setReport, setRfpName, setBidName, addToHistory } = useEvaluation()
   const navigate = useNavigate()
 
@@ -477,6 +611,59 @@ export default function PQTQEvaluatePage() {
         setError(e.message)
         setPhase('error')
       }
+    }
+  }
+
+  // Ready check for the custom PQ/TQ panel
+  const customPQValid = customPQ.every(p => p.name.trim() !== '')
+  const customTQValid = customTQ.every(c => c.category.trim() !== '' && c.criteria.every(cr => cr.name.trim() !== '' && cr.marks > 0))
+  const customPanelReady = bidFiles.length > 0 && (customPQ.some(p => p.name.trim()) || customTQ.some(c => c.category.trim())) && customPQValid && customTQValid
+
+  async function handleRunCustomPQTQ() {
+    const categories = []
+
+    const filledPQ = customPQ.filter(p => p.name.trim())
+    if (filledPQ.length > 0) {
+      categories.push({
+        name: 'Pre-Qualification Requirements',
+        minimum_required: 100,
+        criteria: filledPQ.map(p => ({ question: p.name.trim(), max_marks: 10, mandatory: true })),
+      })
+    }
+
+    customTQ.filter(c => c.category.trim()).forEach(cat => {
+      const filledCriteria = cat.criteria.filter(cr => cr.name.trim() && cr.marks > 0)
+      if (filledCriteria.length > 0) {
+        categories.push({
+          name: cat.category.trim(),
+          minimum_required: 0,
+          criteria: filledCriteria.map(cr => ({ question: cr.name.trim(), max_marks: Number(cr.marks), mandatory: false })),
+        })
+      }
+    })
+
+    if (categories.length === 0) return
+
+    setPhase('progress')
+    setStepStates(STEPS.map(() => 'pending'))
+    setError('')
+    const timers = makeTimers()
+    try {
+      const report = await runCustomEvaluation(bidFiles, buildCriteriaPayload({
+        threshold: 70,
+        categories: categories.map(c => ({
+          id: Date.now() + Math.random(),
+          name: c.name,
+          minimumRequired: c.minimum_required,
+          criteria: c.criteria.map(cr => ({ id: Date.now() + Math.random(), question: cr.question, maxMarks: cr.max_marks, mandatory: cr.mandatory })),
+        })),
+      }))
+      timers.forEach(clearTimeout)
+      await finishEvaluation(report, rfpFile?.name ?? 'Custom PQTQ Criteria')
+    } catch (e) {
+      timers.forEach(clearTimeout)
+      setError(e.message)
+      setPhase('error')
     }
   }
 
@@ -727,6 +914,53 @@ export default function PQTQEvaluatePage() {
                 Powered by Groq LLaMA — results in 30–90 seconds
               </p>
             </div>
+          </div>
+
+          {/* Custom PQ/TQ Panel */}
+          <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+            {/* Toggle header */}
+            <button
+              onClick={() => setShowCustom(v => !v)}
+              style={{ width: '100%', padding: '0.875rem 1.25rem', background: showCustom ? ACCENT_LIGHT : '#F8FAFC', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10, textAlign: 'left', borderBottom: showCustom ? '1px solid #C7D2FE' : 'none' }}
+            >
+              <div style={{ width: 28, height: 28, borderRadius: 7, background: showCustom ? ACCENT : '#E2E8F0', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, transition: 'all .2s' }}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={showCustom ? '#fff' : '#94A3B8'} strokeWidth="2.5">
+                  {showCustom
+                    ? <line x1="5" y1="12" x2="19" y2="12"/>
+                    : <><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></>}
+                </svg>
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 700, fontSize: '0.875rem', color: showCustom ? ACCENT : '#1E293B' }}>Add Custom PQ / TQ Criteria</div>
+                <div style={{ fontSize: '0.72rem', color: '#94A3B8', marginTop: 1 }}>Manually define requirements — AI will score the bid against them</div>
+              </div>
+              {(customPQ.some(p => p.name.trim()) || customTQ.some(c => c.category.trim())) && (
+                <span style={{ background: ACCENT, color: '#fff', borderRadius: 999, fontSize: '0.65rem', fontWeight: 800, padding: '2px 8px', flexShrink: 0 }}>
+                  {customPQ.filter(p => p.name.trim()).length + customTQ.flatMap(c => c.criteria.filter(cr => cr.name.trim())).length} added
+                </span>
+              )}
+            </button>
+
+            {showCustom && (
+              <div style={{ padding: '1.25rem' }}>
+                <CustomPQTQPanel pqItems={customPQ} tqCats={customTQ} onPQ={setCustomPQ} onTQ={setCustomTQ} />
+                <div style={{ borderTop: '1px solid #E2E8F0', marginTop: '1.25rem', paddingTop: '1.25rem', display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <button
+                    onClick={handleRunCustomPQTQ}
+                    disabled={!customPanelReady}
+                    style={{ flex: 1, padding: '0.65rem 1.25rem', background: customPanelReady ? ACCENT : '#E2E8F0', color: customPanelReady ? '#fff' : '#94A3B8', border: 'none', borderRadius: 8, cursor: customPanelReady ? 'pointer' : 'not-allowed', fontWeight: 700, fontSize: '0.875rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, transition: 'all .2s' }}
+                  >
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                      <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                    </svg>
+                    Run with Custom Criteria
+                  </button>
+                  <div style={{ fontSize: '0.72rem', color: '#94A3B8', lineHeight: 1.4, maxWidth: 160 }}>
+                    {bidFiles.length === 0 ? 'Upload a bid document first' : !customPanelReady ? 'Fill in all criteria fields' : 'Uses bid doc + your criteria'}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Upload status */}

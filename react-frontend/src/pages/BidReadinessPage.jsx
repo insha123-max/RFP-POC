@@ -39,7 +39,7 @@ function FileZone({ label, hint, file, onFile, required }) {
 }
 
 /* ── Single checklist row ─────────────────────────────────────────────────── */
-function CheckRow({ item, checked, onChange }) {
+function CheckRow({ item, checked, onChange, onRemove }) {
   const isPQ = item.type === 'PQ'
   return (
     <div style={{
@@ -63,10 +63,18 @@ function CheckRow({ item, checked, onChange }) {
           <div style={{ fontSize: '0.73rem', color: '#6B7280', lineHeight: 1.45 }}>{item.detail}</div>
         )}
       </div>
-      <span style={{ fontSize: '0.68rem', fontWeight: 700, flexShrink: 0, marginTop: 2, whiteSpace: 'nowrap',
-        color: checked ? '#15803D' : '#C4C9D4' }}>
-        {checked ? '✓ Can meet' : '○'}
-      </span>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0, marginTop: 2 }}>
+        <span style={{ fontSize: '0.68rem', fontWeight: 700, whiteSpace: 'nowrap', color: checked ? '#15803D' : '#C4C9D4' }}>
+          {checked ? '✓ Can meet' : '○'}
+        </span>
+        {onRemove && (
+          <button
+            onClick={() => onRemove(item.id)}
+            title="Remove custom item"
+            style={{ background: '#FEE2E2', border: 'none', borderRadius: 4, width: 16, height: 16, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.55rem', color: '#DC2626', fontWeight: 700, padding: 0 }}
+          >✕</button>
+        )}
+      </div>
     </div>
   )
 }
@@ -79,7 +87,6 @@ function TQCategory({ label, items, checked, onToggle, onCheckAll }) {
 
   return (
     <div>
-      {/* Category header row */}
       <div
         onClick={() => setOpen(v => !v)}
         style={{
@@ -113,7 +120,6 @@ function TQCategory({ label, items, checked, onToggle, onCheckAll }) {
         >{allChecked ? '✕ Uncheck All' : '✓ Check All'}</button>
       </div>
 
-      {/* Items */}
       {open && items.map(item => (
         <CheckRow key={item.id} item={item} checked={!!checked[item.id]} onChange={onToggle} />
       ))}
@@ -173,12 +179,48 @@ export default function BidReadinessPage() {
   const [scoreResult, setScoreResult] = useState(null)
   const scoreRef = useRef(null)
 
+  // Custom items state
+  const [customPQ,  setCustomPQ]  = useState([])
+  const [customTQ,  setCustomTQ]  = useState([])
+  const [pqAddOpen, setPqAddOpen] = useState(false)
+  const [tqAddOpen, setTqAddOpen] = useState(false)
+  const [pqDraft,   setPqDraft]   = useState({ criterion: '', detail: '' })
+  const [tqDraft,   setTqDraft]   = useState({ category: '', criterion: '', detail: '', max_score: 10 })
+
+  // Combined arrays (AI-extracted + user-added)
+  const allPQItems = result ? [...result.pq_items, ...customPQ] : []
+  const allTQItems = result ? [...result.tq_items, ...customTQ] : []
+
   const toggle = (id, val) => { setChecked(p => ({ ...p, [id]: val })); setScoreResult(null) }
-  const reset  = () => { setResult(null); setRfpFile(null); setAddFile(null); setChecked({}); setError(''); setScoreResult(null) }
+  const reset  = () => {
+    setResult(null); setRfpFile(null); setAddFile(null); setChecked({}); setError(''); setScoreResult(null)
+    setCustomPQ([]); setCustomTQ([]); setPqAddOpen(false); setTqAddOpen(false)
+    setPqDraft({ criterion: '', detail: '' }); setTqDraft({ category: '', criterion: '', detail: '', max_score: 10 })
+  }
+
+  const addCustomPQItem = () => {
+    if (!pqDraft.criterion.trim()) return
+    const item = { id: 'cpq-' + Date.now(), type: 'PQ', category: 'Custom', criterion: pqDraft.criterion.trim(), detail: pqDraft.detail.trim(), max_score: 0, is_mandatory: true }
+    setCustomPQ(p => [...p, item])
+    setPqDraft({ criterion: '', detail: '' })
+    setPqAddOpen(false)
+  }
+
+  const addCustomTQItem = () => {
+    if (!tqDraft.criterion.trim() || !tqDraft.category.trim()) return
+    const item = { id: 'ctq-' + Date.now(), type: 'TQ', category: tqDraft.category.trim(), criterion: tqDraft.criterion.trim(), detail: tqDraft.detail.trim(), max_score: Number(tqDraft.max_score) || 10, is_mandatory: false }
+    setCustomTQ(p => [...p, item])
+    setTqDraft({ category: '', criterion: '', detail: '', max_score: 10 })
+    setTqAddOpen(false)
+  }
+
+  const removeCustomPQ = id => { setCustomPQ(p => p.filter(i => i.id !== id)); setChecked(p => { const n = { ...p }; delete n[id]; return n }) }
+  const removeCustomTQ = id => { setCustomTQ(p => p.filter(i => i.id !== id)); setChecked(p => { const n = { ...p }; delete n[id]; return n }) }
 
   const handleAnalyze = async () => {
     if (!rfpFile) { setError('Please upload the RFP document.'); return }
     setError(''); setLoading(true); setResult(null); setChecked({})
+    setCustomPQ([]); setCustomTQ([])
     try {
       setResult(await fetchBidReadiness(rfpFile, addFile || null))
     } catch (e) {
@@ -187,16 +229,16 @@ export default function BidReadinessPage() {
   }
 
   const calculateScore = () => {
-    const pqTotal  = result.pq_items.length
-    const pqMet    = result.pq_items.filter(i => checked[i.id]).length
+    const pqTotal  = allPQItems.length
+    const pqMet    = allPQItems.filter(i => checked[i.id]).length
     const pqPct    = pqTotal > 0 ? Math.round((pqMet / pqTotal) * 100) : 0
     const pqPass   = pqMet === pqTotal && pqTotal > 0
-    const tqTotal      = result.tq_items.reduce((s, i) => s + i.max_score, 0)
-    const tqAchiev     = result.tq_items.filter(i => checked[i.id]).reduce((s, i) => s + i.max_score, 0)
+    const tqTotal      = allTQItems.reduce((s, i) => s + i.max_score, 0)
+    const tqAchiev     = allTQItems.filter(i => checked[i.id]).reduce((s, i) => s + i.max_score, 0)
     const tqPct        = tqTotal > 0 ? Math.round((tqAchiev / tqTotal) * 100) : 0
-    const tqCriteriaMet   = result.tq_items.filter(i => checked[i.id]).length
-    const tqCriteriaTotal = result.tq_items.length
-    const missed   = result.tq_items.filter(i => !checked[i.id])
+    const tqCriteriaMet   = allTQItems.filter(i => checked[i.id]).length
+    const tqCriteriaTotal = allTQItems.length
+    const missed   = allTQItems.filter(i => !checked[i.id])
     const overall  = pqTotal > 0 ? Math.round((pqPct * 0.3) + (tqPct * 0.7)) : tqPct
 
     let recommendation, recColor
@@ -218,68 +260,145 @@ export default function BidReadinessPage() {
     setTimeout(() => scoreRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80)
   }
 
-  const tqByCategory = result ? result.tq_items.reduce((acc, item) => {
+  const tqByCategory = allTQItems.reduce((acc, item) => {
     ;(acc[item.category] = acc[item.category] || []).push(item); return acc
-  }, {}) : {}
+  }, {})
 
   /* ── Upload phase ─────────────────────────────────────────────────────── */
   if (!result) {
     return (
-      <div style={{ minHeight: '100%', background: '#F9FAFB', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '3rem 1rem' }}>
-        <div style={{ width: '100%', maxWidth: 560 }}>
+      <div style={{ minHeight: '100%', background: 'linear-gradient(160deg,#F0F4FF 0%,#F9FAFB 45%,#FFF8F0 100%)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '2.5rem 1rem' }}>
+        <style>{`@keyframes spin{to{transform:rotate(360deg)}} @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}`}</style>
+        <div style={{ width: '100%', maxWidth: 660 }}>
+
+          {/* ── Hero ── */}
           <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
-            <div style={{ display: 'inline-flex', width: 52, height: 52, borderRadius: 14, background: '#EEF2FF', alignItems: 'center', justifyContent: 'center', marginBottom: 14 }}>
-              <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#4F46E5" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <div style={{ display: 'inline-flex', width: 68, height: 68, borderRadius: 20, background: 'linear-gradient(135deg,#4F46E5,#7C3AED)', alignItems: 'center', justifyContent: 'center', marginBottom: 18, boxShadow: '0 10px 28px rgba(79,70,229,.3)' }}>
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
               </svg>
             </div>
-            <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#111827', marginBottom: 6 }}>Bid Readiness Check</div>
-            <div style={{ fontSize: '0.85rem', color: '#6B7280', lineHeight: 1.65, maxWidth: 420, margin: '0 auto' }}>
-              Upload your RFP and we'll extract every PQ eligibility requirement and TQ scoring criterion in plain English — then check what your company can fulfil.
+            <div style={{ fontSize: '2rem', fontWeight: 900, color: '#111827', marginBottom: 10, letterSpacing: '-0.02em' }}>PQTQ Checker</div>
+            <div style={{ fontSize: '0.875rem', color: '#6B7280', lineHeight: 1.75, maxWidth: 460, margin: '0 auto 1.5rem' }}>
+              Upload your RFP and we'll extract every PQ eligibility requirement and TQ scoring criterion in plain English — then let you assess what your company can fulfil.
+            </div>
+
+            {/* Feature pills */}
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
+              {[
+                { label: 'PQ Eligibility', sub: 'Mandatory requirements', bg: '#FEF3C7', color: '#92400E', dot: '#F59E0B' },
+                { label: 'TQ Scoring',     sub: 'Technical criteria',     bg: '#EEF2FF', color: '#3730A3', dot: '#4F46E5' },
+                { label: 'Readiness Score', sub: 'Go / No-Go decision',   bg: '#ECFDF5', color: '#065F46', dot: '#10B981' },
+              ].map(c => (
+                <div key={c.label} style={{ display: 'flex', alignItems: 'center', gap: 6, background: c.bg, borderRadius: 999, padding: '5px 14px', border: `1px solid ${c.dot}33` }}>
+                  <span style={{ width: 7, height: 7, borderRadius: '50%', background: c.dot, flexShrink: 0 }} />
+                  <span style={{ fontSize: '0.75rem', fontWeight: 700, color: c.color }}>{c.label}</span>
+                  <span style={{ fontSize: '0.68rem', color: '#9CA3AF' }}>· {c.sub}</span>
+                </div>
+              ))}
             </div>
           </div>
 
-          <div style={{ background: '#fff', borderRadius: 14, border: '1px solid #E5E7EB', padding: '1.5rem', boxShadow: '0 2px 12px rgba(0,0,0,.06)' }}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: '1.25rem' }}>
-              <FileZone label="Upload RFP / Tender Document" hint="PDF, DOC, DOCX · Required" file={rfpFile} onFile={setRfpFile} required />
-              <div style={{ position: 'relative' }}>
-                <FileZone label="Additional Document (optional)" hint="Annexures, corrigendum, scoring matrix" file={addFile} onFile={setAddFile} required={false} />
-                {addFile && (
-                  <button onClick={e => { e.stopPropagation(); setAddFile(null) }} style={{
-                    position: 'absolute', top: 8, right: 10, background: '#FEE2E2', border: 'none',
-                    borderRadius: '50%', width: 18, height: 18, cursor: 'pointer', display: 'flex',
-                    alignItems: 'center', justifyContent: 'center', fontSize: '0.6rem', color: '#DC2626', fontWeight: 700,
-                  }}>✕</button>
-                )}
-              </div>
+          {/* ── Upload card ── */}
+          <div style={{ background: '#fff', borderRadius: 18, border: '1px solid #E5E7EB', overflow: 'hidden', boxShadow: '0 4px 28px rgba(0,0,0,.08)' }}>
+
+            {/* Card header bar */}
+            <div style={{ padding: '0.9rem 1.5rem', borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', gap: 8, background: '#FAFAFA' }}>
+              <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#4F46E5' }} />
+              <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#374151' }}>Upload Documents</span>
+              <span style={{ marginLeft: 'auto', fontSize: '0.7rem', color: '#9CA3AF' }}>PDF · DOC · DOCX · PPTX</span>
             </div>
 
-            {error && (
-              <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, padding: '9px 12px', marginBottom: 12, fontSize: '0.8rem', color: '#DC2626' }}>
-                {error}
-              </div>
-            )}
+            <div style={{ padding: '1.5rem' }}>
 
-            <button onClick={handleAnalyze} disabled={loading || !rfpFile} style={{
-              width: '100%', padding: '0.825rem', borderRadius: 10, border: 'none',
-              background: rfpFile ? 'linear-gradient(135deg,#4F46E5,#7C3AED)' : '#E5E7EB',
-              color: rfpFile ? '#fff' : '#9CA3AF', fontWeight: 700, fontSize: '0.92rem',
-              cursor: rfpFile ? 'pointer' : 'not-allowed', transition: 'all .15s',
-              boxShadow: rfpFile ? '0 4px 14px rgba(79,70,229,.3)' : 'none',
-            }}>
-              {loading ? 'Analysing RFP…' : 'Analyse & Generate Checklist'}
-            </button>
-
-            {loading && (
-              <div style={{ marginTop: '1.25rem', textAlign: 'center', color: '#6B7280', fontSize: '0.8rem' }}>
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#4F46E5" strokeWidth="2" strokeLinecap="round"
-                  style={{ animation: 'spin 1s linear infinite', display: 'block', margin: '0 auto 8px' }}>
-                  <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
-                </svg>
-                Extracting PQ &amp; TQ criteria… usually 15–30 seconds.
-                <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+              {/* Step 1 — RFP */}
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                  <span style={{ width: 22, height: 22, borderRadius: '50%', background: 'linear-gradient(135deg,#4F46E5,#7C3AED)', color: '#fff', fontSize: '0.68rem', fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, boxShadow: '0 2px 6px rgba(79,70,229,.35)' }}>1</span>
+                  <span style={{ fontSize: '0.82rem', fontWeight: 700, color: '#111827' }}>RFP / Tender Document</span>
+                  <span style={{ marginLeft: 'auto', fontSize: '0.62rem', fontWeight: 700, background: '#FEE2E2', color: '#DC2626', padding: '2px 7px', borderRadius: 5 }}>REQUIRED</span>
+                </div>
+                <FileZone label="Drop your RFP here or click to browse" hint="The main tender / RFP document" file={rfpFile} onFile={setRfpFile} required={false} />
               </div>
-            )}
+
+              {/* Divider */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '10px 0 14px' }}>
+                <div style={{ flex: 1, height: 1, background: '#F3F4F6' }} />
+                <span style={{ fontSize: '0.64rem', color: '#D1D5DB', fontWeight: 600, letterSpacing: '0.06em' }}>OPTIONAL</span>
+                <div style={{ flex: 1, height: 1, background: '#F3F4F6' }} />
+              </div>
+
+              {/* Step 2 — Additional */}
+              <div style={{ marginBottom: 20 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                  <span style={{ width: 22, height: 22, borderRadius: '50%', background: '#F3F4F6', color: '#6B7280', fontSize: '0.68rem', fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>2</span>
+                  <span style={{ fontSize: '0.82rem', fontWeight: 700, color: '#374151' }}>Additional Document</span>
+                  <span style={{ fontSize: '0.7rem', color: '#9CA3AF', marginLeft: 4 }}>Annexures, corrigendum, scoring matrix</span>
+                </div>
+                <div style={{ position: 'relative' }}>
+                  <FileZone label="Drop additional file here or click to browse" hint="Annexures, corrigendum, scoring tables" file={addFile} onFile={setAddFile} required={false} />
+                  {addFile && (
+                    <button onClick={e => { e.stopPropagation(); setAddFile(null) }} style={{
+                      position: 'absolute', top: 8, right: 10, background: '#FEE2E2', border: 'none',
+                      borderRadius: '50%', width: 20, height: 20, cursor: 'pointer', display: 'flex',
+                      alignItems: 'center', justifyContent: 'center', fontSize: '0.6rem', color: '#DC2626', fontWeight: 700,
+                    }}>✕</button>
+                  )}
+                </div>
+              </div>
+
+              {error && (
+                <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 9, padding: '9px 13px', marginBottom: 14, fontSize: '0.8rem', color: '#DC2626', display: 'flex', alignItems: 'center', gap: 7 }}>
+                  <span style={{ flexShrink: 0, fontSize: '0.95rem' }}>⚠</span>{error}
+                </div>
+              )}
+
+              {/* CTA Button */}
+              <button onClick={handleAnalyze} disabled={loading || !rfpFile} style={{
+                width: '100%', padding: '0.9rem', borderRadius: 11, border: 'none',
+                background: rfpFile ? 'linear-gradient(135deg,#4F46E5,#7C3AED)' : '#E5E7EB',
+                color: rfpFile ? '#fff' : '#9CA3AF', fontWeight: 700, fontSize: '0.95rem',
+                cursor: rfpFile ? 'pointer' : 'not-allowed', transition: 'all .15s',
+                boxShadow: rfpFile ? '0 4px 18px rgba(79,70,229,.32)' : 'none',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+              }}>
+                {loading ? (
+                  <><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" style={{ animation: 'spin 1s linear infinite' }}><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>Analysing RFP…</>
+                ) : (
+                  <><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>Analyse &amp; Generate Checklist</>
+                )}
+              </button>
+
+              {/* Loading progress */}
+              {loading && (
+                <div style={{ marginTop: 14, background: '#F8F7FF', borderRadius: 12, padding: '12px 16px', border: '1px solid #E0E7FF' }}>
+                  {[
+                    'Parsing RFP document…',
+                    'Extracting PQ eligibility requirements…',
+                    'Extracting TQ scoring criteria…',
+                    'Building your checklist…',
+                  ].map((label, i) => (
+                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: i < 3 ? 7 : 0 }}>
+                      <div style={{
+                        width: 14, height: 14, borderRadius: '50%', flexShrink: 0,
+                        background: i === 0 ? '#22C55E' : i === 1 ? '#4F46E5' : '#E5E7EB',
+                        border: i === 1 ? '2px solid #4F46E5' : 'none',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        animation: i === 1 ? 'pulse 1.2s ease-in-out infinite' : 'none',
+                      }}>
+                        {i === 0 && <span style={{ fontSize: '0.5rem', color: '#fff', fontWeight: 900 }}>✓</span>}
+                      </div>
+                      <span style={{ fontSize: '0.74rem', fontWeight: i === 1 ? 600 : 400, color: i === 0 ? '#9CA3AF' : i === 1 ? '#4F46E5' : '#C4C9D4' }}>{label}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Footer note */}
+          <div style={{ textAlign: 'center', marginTop: '1.1rem', fontSize: '0.71rem', color: '#9CA3AF' }}>
+            Usually takes 15–30 seconds &nbsp;·&nbsp; No data is stored
           </div>
         </div>
       </div>
@@ -295,7 +414,7 @@ export default function BidReadinessPage() {
         <div>
           <div style={{ fontSize: '1.25rem', fontWeight: 800, color: '#111827' }}>PQTQ Checklist</div>
           <div style={{ fontSize: '0.75rem', color: '#9CA3AF', marginTop: 2 }}>
-            {rfpFile?.name} &nbsp;·&nbsp; {result.pq_items.length} PQ criteria &nbsp;·&nbsp; {result.tq_items.length} TQ criteria
+            {rfpFile?.name} &nbsp;·&nbsp; {allPQItems.length} PQ criteria &nbsp;·&nbsp; {allTQItems.length} TQ criteria
           </div>
         </div>
         <button onClick={reset} style={{
@@ -305,7 +424,7 @@ export default function BidReadinessPage() {
       </div>
 
       {/* ── Live summary strip ── */}
-      <SummaryStrip pqItems={result.pq_items} tqItems={result.tq_items} checked={checked} />
+      <SummaryStrip pqItems={allPQItems} tqItems={allTQItems} checked={checked} />
 
       {/* ── Two-column checklist ── */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.25rem', alignItems: 'start' }}>
@@ -321,19 +440,18 @@ export default function BidReadinessPage() {
             <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
               <span style={{ fontSize: '0.62rem', fontWeight: 800, padding: '2px 6px', borderRadius: 4, background: PQ_BADGE, color: PQ_COLOR }}>PQ</span>
               <span style={{ fontWeight: 700, fontSize: '0.88rem', color: PQ_COLOR }}>Pre-Qualification Eligibility</span>
-              <span style={{ fontSize: '0.7rem', color: '#9CA3AF', background: '#fff', padding: '1px 7px', borderRadius: 10 }}>{result.pq_items.length}</span>
+              <span style={{ fontSize: '0.7rem', color: '#9CA3AF', background: '#fff', padding: '1px 7px', borderRadius: 10 }}>{allPQItems.length}</span>
             </div>
             <span style={{ color: '#C4C9D4', fontSize: '0.75rem' }}>{pqOpen ? '▲' : '▼'}</span>
           </button>
 
           {pqOpen && (() => {
-            const pqMet      = result.pq_items.filter(i => checked[i.id]).length
-            const pqTotal    = result.pq_items.length
+            const pqMet      = allPQItems.filter(i => checked[i.id]).length
+            const pqTotal    = allPQItems.length
             const pqAllMet   = pqMet === pqTotal && pqTotal > 0
-            const allPQChecked = pqAllMet
             const toggleAllPQ = () => {
               const next = {}
-              result.pq_items.forEach(i => { next[i.id] = !pqAllMet })
+              allPQItems.forEach(i => { next[i.id] = !pqAllMet })
               setChecked(prev => ({ ...prev, ...next }))
               setScoreResult(null)
             }
@@ -351,9 +469,46 @@ export default function BidReadinessPage() {
                     padding: '3px 9px', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0,
                   }}>{pqAllMet ? '✕ Uncheck All' : '✓ Check All'}</button>
                 </div>
+
+                {/* AI-extracted PQ items */}
                 {result.pq_items.map(item => (
                   <CheckRow key={item.id} item={item} checked={!!checked[item.id]} onChange={toggle} />
                 ))}
+
+                {/* Custom PQ items (with remove button) */}
+                {customPQ.map(item => (
+                  <CheckRow key={item.id} item={item} checked={!!checked[item.id]} onChange={toggle} onRemove={removeCustomPQ} />
+                ))}
+
+                {/* Add custom PQ requirement */}
+                {pqAddOpen ? (
+                  <div style={{ padding: '10px 14px', background: '#FFFDF5', borderTop: '1px dashed #FDE68A' }}>
+                    <input
+                      placeholder="Requirement (e.g. ISO 27001 certification)"
+                      value={pqDraft.criterion}
+                      onChange={e => setPqDraft(p => ({ ...p, criterion: e.target.value }))}
+                      onKeyDown={e => { if (e.key === 'Enter') addCustomPQItem(); if (e.key === 'Escape') { setPqAddOpen(false); setPqDraft({ criterion: '', detail: '' }) } }}
+                      autoFocus
+                      style={{ width: '100%', marginBottom: 6, padding: '6px 10px', borderRadius: 6, border: '1px solid #FDE68A', fontSize: '0.8rem', boxSizing: 'border-box', outline: 'none', fontFamily: 'inherit' }}
+                    />
+                    <input
+                      placeholder="Description (optional)"
+                      value={pqDraft.detail}
+                      onChange={e => setPqDraft(p => ({ ...p, detail: e.target.value }))}
+                      onKeyDown={e => { if (e.key === 'Escape') { setPqAddOpen(false); setPqDraft({ criterion: '', detail: '' }) } }}
+                      style={{ width: '100%', marginBottom: 8, padding: '6px 10px', borderRadius: 6, border: '1px solid #FDE68A', fontSize: '0.8rem', boxSizing: 'border-box', outline: 'none', fontFamily: 'inherit' }}
+                    />
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <button onClick={addCustomPQItem} style={{ flex: 1, padding: '5px 0', borderRadius: 6, border: 'none', background: '#F59E0B', color: '#fff', fontWeight: 700, fontSize: '0.75rem', cursor: 'pointer' }}>Add Requirement</button>
+                      <button onClick={() => { setPqAddOpen(false); setPqDraft({ criterion: '', detail: '' }) }} style={{ padding: '5px 12px', borderRadius: 6, border: '1px solid #E5E7EB', background: '#fff', color: '#6B7280', fontSize: '0.75rem', cursor: 'pointer' }}>Cancel</button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => setPqAddOpen(true)}
+                    style={{ width: '100%', padding: '9px 14px', border: 'none', background: '#FFFDF5', color: '#D97706', fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer', borderTop: '1px dashed #FDE68A', textAlign: 'left', display: 'block' }}
+                  >+ Add Custom PQ Requirement</button>
+                )}
               </div>
             )
           })()}
@@ -370,16 +525,16 @@ export default function BidReadinessPage() {
             <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
               <span style={{ fontSize: '0.62rem', fontWeight: 800, padding: '2px 6px', borderRadius: 4, background: TQ_BADGE, color: TQ_COLOR }}>TQ</span>
               <span style={{ fontWeight: 700, fontSize: '0.88rem', color: TQ_COLOR }}>Technical Qualification Scoring</span>
-              <span style={{ fontSize: '0.7rem', color: '#9CA3AF', background: '#fff', padding: '1px 7px', borderRadius: 10 }}>{result.tq_items.length}</span>
+              <span style={{ fontSize: '0.7rem', color: '#9CA3AF', background: '#fff', padding: '1px 7px', borderRadius: 10 }}>{allTQItems.length}</span>
             </div>
             <span style={{ color: '#C4C9D4', fontSize: '0.75rem' }}>{tqOpen ? '▲' : '▼'}</span>
           </button>
 
           {tqOpen && (() => {
-            const allTQChecked = result.tq_items.every(i => checked[i.id])
+            const allTQChecked = allTQItems.every(i => checked[i.id])
             const toggleAllTQ = () => {
               const next = {}
-              result.tq_items.forEach(i => { next[i.id] = !allTQChecked })
+              allTQItems.forEach(i => { next[i.id] = !allTQChecked })
               setChecked(prev => ({ ...prev, ...next }))
               setScoreResult(null)
             }
@@ -393,6 +548,7 @@ export default function BidReadinessPage() {
                     padding: '3px 9px', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0,
                   }}>{allTQChecked ? '✕ Uncheck All' : '✓ Check All'}</button>
                 </div>
+
                 {Object.entries(tqByCategory).map(([cat, items]) => (
                   <TQCategory
                     key={cat}
@@ -408,6 +564,49 @@ export default function BidReadinessPage() {
                     }}
                   />
                 ))}
+
+                {/* Add custom TQ criterion */}
+                {tqAddOpen ? (
+                  <div style={{ padding: '10px 14px', background: '#F8F7FF', borderTop: '1px dashed #C7D2FE' }}>
+                    <input
+                      placeholder="Category (e.g. Team Qualifications)"
+                      value={tqDraft.category}
+                      onChange={e => setTqDraft(p => ({ ...p, category: e.target.value }))}
+                      onKeyDown={e => { if (e.key === 'Escape') { setTqAddOpen(false); setTqDraft({ category: '', criterion: '', detail: '', max_score: 10 }) } }}
+                      autoFocus
+                      style={{ width: '100%', marginBottom: 6, padding: '6px 10px', borderRadius: 6, border: '1px solid #C7D2FE', fontSize: '0.8rem', boxSizing: 'border-box', outline: 'none', fontFamily: 'inherit' }}
+                    />
+                    <input
+                      placeholder="Criterion (e.g. PMP certified project manager)"
+                      value={tqDraft.criterion}
+                      onChange={e => setTqDraft(p => ({ ...p, criterion: e.target.value }))}
+                      style={{ width: '100%', marginBottom: 6, padding: '6px 10px', borderRadius: 6, border: '1px solid #C7D2FE', fontSize: '0.8rem', boxSizing: 'border-box', outline: 'none', fontFamily: 'inherit' }}
+                    />
+                    <input
+                      placeholder="Description (optional)"
+                      value={tqDraft.detail}
+                      onChange={e => setTqDraft(p => ({ ...p, detail: e.target.value }))}
+                      style={{ width: '100%', marginBottom: 6, padding: '6px 10px', borderRadius: 6, border: '1px solid #C7D2FE', fontSize: '0.8rem', boxSizing: 'border-box', outline: 'none', fontFamily: 'inherit' }}
+                    />
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <input
+                        type="number"
+                        placeholder="Max score"
+                        value={tqDraft.max_score}
+                        onChange={e => setTqDraft(p => ({ ...p, max_score: e.target.value }))}
+                        min={1} max={100}
+                        style={{ width: 80, padding: '5px 8px', borderRadius: 6, border: '1px solid #C7D2FE', fontSize: '0.8rem', outline: 'none', fontFamily: 'inherit' }}
+                      />
+                      <button onClick={addCustomTQItem} style={{ flex: 1, padding: '5px 0', borderRadius: 6, border: 'none', background: '#4F46E5', color: '#fff', fontWeight: 700, fontSize: '0.75rem', cursor: 'pointer' }}>Add Criterion</button>
+                      <button onClick={() => { setTqAddOpen(false); setTqDraft({ category: '', criterion: '', detail: '', max_score: 10 }) }} style={{ padding: '5px 10px', borderRadius: 6, border: '1px solid #E5E7EB', background: '#fff', color: '#6B7280', fontSize: '0.75rem', cursor: 'pointer' }}>Cancel</button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => setTqAddOpen(true)}
+                    style={{ width: '100%', padding: '9px 14px', border: 'none', background: '#F8F7FF', color: '#4F46E5', fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer', borderTop: '1px dashed #C7D2FE', textAlign: 'left', display: 'block' }}
+                  >+ Add Custom TQ Criterion</button>
+                )}
               </div>
             )
           })()}
@@ -425,7 +624,7 @@ export default function BidReadinessPage() {
           onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-1px)'; e.currentTarget.style.boxShadow = '0 6px 22px rgba(79,70,229,.45)' }}
           onMouseLeave={e => { e.currentTarget.style.transform = ''; e.currentTarget.style.boxShadow = '0 4px 16px rgba(79,70,229,.35)' }}
         >
-          Calculate My Bid Readiness Score
+          Calculate My PQTQ Score
         </button>
         <div style={{ fontSize: '0.72rem', color: '#9CA3AF' }}>Check all criteria your company can fulfil, then click to see your score</div>
       </div>
@@ -439,7 +638,7 @@ export default function BidReadinessPage() {
           {/* gradient header */}
           <div style={{ background: 'linear-gradient(135deg,#4F46E5,#7C3AED)', padding: '1rem 1.5rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <div>
-              <div style={{ fontSize: '1rem', fontWeight: 800, color: '#fff' }}>Bid Readiness Score</div>
+              <div style={{ fontSize: '1rem', fontWeight: 800, color: '#fff' }}>PQTQ Score</div>
               <div style={{ fontSize: '0.72rem', color: 'rgba(255,255,255,.65)', marginTop: 2 }}>{rfpFile?.name}</div>
             </div>
             <span style={{
