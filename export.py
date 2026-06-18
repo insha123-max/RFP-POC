@@ -173,28 +173,6 @@ def generate_word_report(report: EvaluationReport) -> bytes:
 
     doc.add_paragraph()
 
-    # ── Mandatory Eligibility Checks ─────────────────────────────────────────
-    if report.disqualifier_checks:
-        _heading(doc, "Mandatory Eligibility Checks")
-        dc_cols = ["Condition", "Status", "Notes"]
-        dt = doc.add_table(rows=1 + len(report.disqualifier_checks), cols=3)
-        dt.style = "Table Grid"
-        _table_header_row(dt, dc_cols)
-        _set_col_widths(dt, [2.5, 0.8, 3.4])
-
-        for i, chk in enumerate(report.disqualifier_checks, start=1):
-            row = dt.rows[i]
-            bg  = "F0FDF4" if chk.met else "FEF2F2"
-            for j, val in enumerate([chk.condition, "✓ Met" if chk.met else "✗ Not Met", chk.note]):
-                _shade_cell(row.cells[j], bg)
-                p   = row.cells[j].paragraphs[0]
-                run = p.add_run(val)
-                run.font.size = Pt(9)
-                if j == 1:
-                    run.font.color.rgb = GREEN if chk.met else RED
-                    run.bold = True
-
-        doc.add_paragraph()
 
     # ── Criterion-Level Detail ────────────────────────────────────────────────
     _heading(doc, "Criterion-Level Evaluation Details")

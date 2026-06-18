@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { Routes, Route } from 'react-router-dom'
+import { useState, useEffect } from 'react'
+import { Routes, Route, useLocation } from 'react-router-dom'
 import { EvaluationProvider } from './context/EvaluationContext'
 import Sidebar from './components/Sidebar'
 import TopBar from './components/TopBar'
@@ -11,6 +11,12 @@ import ExecutiveReportPage  from './pages/ExecutiveReportPage'
 import AnalyticsPage        from './pages/AnalyticsPage'
 import BidReadinessPage     from './pages/BidReadinessPage'
 
+function ScrollToTop() {
+  const { pathname } = useLocation()
+  useEffect(() => { window.scrollTo(0, 0) }, [pathname])
+  return null
+}
+
 export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true)
 
@@ -20,6 +26,7 @@ export default function App() {
         <TopBar sidebarOpen={sidebarOpen} onToggle={() => setSidebarOpen(o => !o)} />
         <Sidebar open={sidebarOpen} onToggle={() => setSidebarOpen(o => !o)} />
         <div className="main-area">
+          <ScrollToTop />
           <Routes>
             <Route path="/"                  element={<DashboardPage />} />
             <Route path="/evaluate"          element={<EvaluatePage />} />

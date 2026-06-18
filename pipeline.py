@@ -16,7 +16,6 @@ from models import (
     CategoryResult,
     ChecklistItem,
     CriterionEvaluation,
-    DisqualifierCheck,
     EvaluationReport,
     EvaluationRules,
     PrebidQA,
@@ -366,51 +365,22 @@ def _rfp_extract_prompt(chunk: str) -> str:
         f"RULE 1: Do NOT group categories under a single parent. Each scoring category is independent.\n"
         f"RULE 2: subcriteria must be a FLAT list — no nesting.\n"
         f"RULE 3: Preserve exact criterion names and prefixes as they appear in the document.\n"
-        f"RULE 4: Set mandatory=true only for criteria the document explicitly labels as mandatory/compulsory/must-meet.\n"
-        f"RULE 5: If a 'PRE-BID CLARIFICATIONS' section is present, treat it as authoritative — any criterion, "
+        f"RULE 4: If a 'PRE-BID CLARIFICATIONS' section is present, treat it as authoritative — any criterion, "
         f"threshold, or requirement stated there overrides the corresponding original RFP value.\n\n"
         f"Return ONLY JSON:\n"
         f'{{"rules_found":true,"scoring_categories":[{{"category":"Category Name","max_marks":70,"weight_percent":70,'
-        f'"subcriteria":[{{"criterion":"Sub-Criterion Name","max_marks":20,"mandatory":false}}]}}],'
-        f'"threshold":{{"overall_pass_mark":70,"category_minimums":[]}},"mandatory_disqualifiers":[]}}\n\n'
+        f'"subcriteria":[{{"criterion":"Sub-Criterion Name","max_marks":20}}]}}],'
+        f'"threshold":{{"overall_pass_mark":70,"category_minimums":[]}}}}\n\n'
         f"If no explicit numeric marks exist anywhere in this text: "
-        f'return exactly {{"rules_found":false,"scoring_categories":[],"threshold":{{"overall_pass_mark":0,"category_minimums":[]}},"mandatory_disqualifiers":[]}}'
+        f'return exactly {{"rules_found":false,"scoring_categories":[],"threshold":{{"overall_pass_mark":0,"category_minimums":[]}}}}'
     )
 
-
-def _normalize_disqualifiers(raw) -> list:
-    if not isinstance(raw, list):
-        return []
-    result = []
-    for d in raw:
-        if isinstance(d, dict):
-            d = d.get("criterion") or d.get("condition") or d.get("description") or str(d)
-        if d:
-            result.append(str(d))
-    return result
 
 
 def _rfp_pqtq_prompt(chunk: str) -> str:
     return (
-        f"You are reading a tender/RFP document section. Extract Pre-Qualification (PQ) eligibility "
-        f"conditions and Technical Qualification (TQ) scored criteria.\n\n"
+        f"You are reading a tender/RFP document section. Extract Technical Qualification (TQ) scored criteria.\n\n"
         f"{chunk}\n\n"
-        f"=== PART A — MANDATORY_DISQUALIFIERS (PQ eligibility, binary pass/fail) ===\n"
-        f"Extract the following from Eligibility Criteria / Pre-Qualification / Annexure sections "
-        f"as individual strings in mandatory_disqualifiers:\n"
-        f"  • Financial requirements: minimum turnover, net worth thresholds\n"
-        f"  • EMD / Bid Security: actual amount/percentage if stated\n"
-        f"  • Registration / empanelment: specific registry or body\n"
-        f"  • Experience: specific minimums\n"
-        f"  • Certifications: specific standards required\n"
-        f"  • Team / manpower minimums\n"
-        f"  • Make-in-India compliance\n\n"
-        f"CRITICAL RULES FOR PART A:\n"
-        f"  1. Each string must state the REQUIREMENT only — do NOT include any assessment, outcome, or note.\n"
-        f"  2. Only extract conditions explicitly stated in the document. Do NOT invent.\n"
-        f"  3. Keep each condition concise (under 15 words). One condition per entry.\n"
-        f"  4. If a requirement amount/threshold is not specified, OMIT that entry.\n\n"
-        f"=== PART B — SCORING_CATEGORIES (TQ criteria with explicit numeric marks) ===\n"
         f"Extract ONLY Technical Qualification criteria that have EXPLICIT numeric marks/points/weightage.\n"
         f"RULE 0: Set rules_found=true ONLY if you find explicit numeric marks for TQ criteria. "
         f"Do NOT invent or guess marks.\n"
@@ -420,12 +390,10 @@ def _rfp_pqtq_prompt(chunk: str) -> str:
         f"RULE 4: Set qualification_type=\"TQ\" for all scored categories.\n\n"
         f"Return ONLY JSON:\n"
         f'{{"rules_found":true,"scoring_categories":[{{"category":"Category Name","max_marks":70,"weight_percent":70,"qualification_type":"TQ",'
-        f'"subcriteria":[{{"criterion":"Sub-Criterion Name","max_marks":20,"mandatory":false}}]}}],'
-        f'"threshold":{{"overall_pass_mark":70,"category_minimums":[]}},'
-        f'"mandatory_disqualifiers":["Minimum average annual turnover Rs. 50 crores","Minimum 3 production GenAI use cases"]}}\n\n'
-        f"If no explicit numeric TQ marks exist, still populate mandatory_disqualifiers:\n"
-        f'{{"rules_found":false,"scoring_categories":[],"threshold":{{"overall_pass_mark":0,"category_minimums":[]}},'
-        f'"mandatory_disqualifiers":["<concise requirement 1>","<concise requirement 2>"]}}'
+        f'"subcriteria":[{{"criterion":"Sub-Criterion Name","max_marks":20}}]}}],'
+        f'"threshold":{{"overall_pass_mark":70,"category_minimums":[]}}}}\n\n'
+        f"If no explicit numeric TQ marks exist:\n"
+        f'{{"rules_found":false,"scoring_categories":[],"threshold":{{"overall_pass_mark":0,"category_minimums":[]}}}}'
     )
 
 
@@ -492,7 +460,6 @@ async def stage2_extract_rules(rfp_text: str) -> EvaluationRules:
 
     # Merge categories from all chunks
     all_cats: dict[str, dict] = {}
-    all_disq: list[str] = []
     pass_mark = 0.0
     cat_mins: dict[str, dict] = {}
     # Trust the LLM's own rules_found signal — True only when it sees EXPLICIT numeric marks
@@ -509,10 +476,6 @@ async def stage2_extract_rules(rfp_text: str) -> EvaluationRules:
             else:
                 # LLM said no explicit marks in this chunk — skip its categories
                 print(f"[Stage2 chunk] rules_found=false — skipping fabricated categories")
-                disqs = data.get("mandatory_disqualifiers", [])
-                for d in _normalize_disqualifiers(disqs):
-                    if d not in all_disq:
-                        all_disq.append(d)
                 continue
 
             scoring_categories = data.get("scoring_categories", [])
@@ -551,11 +514,6 @@ async def stage2_extract_rules(rfp_text: str) -> EvaluationRules:
                     for sub in cat_subs:
                         if isinstance(sub, dict) and sub.get("criterion", "").lower() not in exist_subs:
                             all_cats[matched_key].setdefault("subcriteria", []).append(sub)
-
-            disqs = data.get("mandatory_disqualifiers", [])
-            for d in _normalize_disqualifiers(disqs):
-                if d not in all_disq:
-                    all_disq.append(d)
 
             thresh = data.get("threshold", {})
             if not isinstance(thresh, dict):
@@ -616,13 +574,7 @@ async def stage2_extract_rules(rfp_text: str) -> EvaluationRules:
     for item in raw_cats:
         cat_name = item[0].get("category", "").lower()
         is_compliance = any(kw in cat_name for kw in _COMPLIANCE_KEYWORDS)
-        if is_compliance:
-            # Move to mandatory eligibility checks
-            disq_text = f"Submission of {item[0]['category']} required"
-            if disq_text not in all_disq:
-                all_disq.append(disq_text)
-            print(f"[Stage2] Moved '{item[0]['category']}' to eligibility checks")
-        else:
+        if not is_compliance:
             scoring_raw.append(item)
     raw_cats = scoring_raw
     # ─────────────────────────────────────────────────────────────────────────
@@ -643,8 +595,7 @@ async def stage2_extract_rules(rfp_text: str) -> EvaluationRules:
             if isinstance(s, dict):
                 crit_name = s.get("criterion", "Criterion")
                 max_m = float(s.get("max_marks") or 0)
-                mand = bool(s.get("mandatory", False))
-                subcriteria_list.append(SubCriterion(criterion=crit_name, max_marks=max_m, mandatory=mand))
+                subcriteria_list.append(SubCriterion(criterion=crit_name, max_marks=max_m))
             else:
                 subcriteria_list.append(SubCriterion(criterion=str(s), max_marks=0))
         
@@ -690,7 +641,6 @@ async def stage2_extract_rules(rfp_text: str) -> EvaluationRules:
         rules_found=rules_extracted,
         scoring_categories=categories,
         threshold=threshold,
-        mandatory_disqualifiers=all_disq,
     )
 
 
@@ -714,13 +664,13 @@ async def stage3_parse_vendor_response(
             for sub in cat.subcriteria:
                 criteria_list.append({
                     "category": cat.category, "criterion": sub.criterion,
-                    "max_marks": sub.max_marks, "mandatory": sub.mandatory,
+                    "max_marks": sub.max_marks,
                 })
         else:
             criteria_list.append({
                 "category": cat.category,
                 "criterion": f"{cat.category} — overall assessment",
-                "max_marks": cat.max_marks, "mandatory": False,
+                "max_marks": cat.max_marks,
             })
 
         is_generic = not cat.subcriteria  # True when no specific subcriteria found
@@ -821,7 +771,7 @@ Distribute {cat.max_marks} marks proportionally across the aspects (marks must s
 {scoring_instruction}
 
 Return ONLY a JSON array with 3-5 items (one per aspect):
-[{{"criterion":"<specific aspect name>","category":"{cat.category}","max_marks":<proportional_max>,"marks_awarded":<actual_marks — use partial marks not just 0 or max>,"vendor_claim":"<direct quote or brief description from the bid, or 'Not found'>","source_reference":"<section heading or 'Not found'>","compliance_status":"Met|Partial|Not Met","confidence":"High|Medium|Low","justification":"<one sentence citing specific bid evidence>","is_mandatory":false}}]"""
+[{{"criterion":"<specific aspect name>","category":"{cat.category}","max_marks":<proportional_max>,"marks_awarded":<actual_marks — use partial marks not just 0 or max>,"vendor_claim":"<direct quote or brief description from the bid, or 'Not found'>","source_reference":"<section heading or 'Not found'>","compliance_status":"Met|Partial|Not Met","confidence":"High|Medium|Low","justification":"<one sentence citing specific bid evidence>"}}]"""
         else:
             prompt = f"""Evaluate the vendor bid for the "{cat.category}" category.
 
@@ -834,20 +784,15 @@ CRITERIA:
 {scoring_instruction}
 
 Return ONLY a JSON array. For each criterion include marks_awarded as the ACTUAL numeric marks (based on tiered scoring), NOT just max_marks:
-[{{"criterion":"<name>","category":"<cat>","max_marks":<n>,"marks_awarded":<actual_tiered_marks>,"vendor_claim":"<quote or Not found>","source_reference":"<section or Not found>","compliance_status":"Met|Partial|Not Met","confidence":"High|Medium|Low","justification":"<one sentence explaining the tier awarded>","is_mandatory":<true|false>}}]"""
+[{{"criterion":"<name>","category":"<cat>","max_marks":<n>,"marks_awarded":<actual_tiered_marks>,"vendor_claim":"<quote or Not found>","source_reference":"<section or Not found>","compliance_status":"Met|Partial|Not Met","confidence":"High|Medium|Low","justification":"<one sentence explaining the tier awarded>"}}]"""
 
         try:
             items = _parse_array(await _call(prompt))
             if not isinstance(items, list):
                 items = []
-            # Trust stage2's mandatory flag — don't let the scoring LLM override it
-            mandatory_lookup = {c["criterion"]: c.get("mandatory", False) for c in criteria_list}
             for item in items:
                 if not isinstance(item, dict):
                     continue
-                crit_name = item.get("criterion", "")
-                if crit_name in mandatory_lookup:
-                    item["is_mandatory"] = mandatory_lookup[crit_name]
                 # Default missing keys in item to satisfy CriterionEvaluation
                 for k in ["criterion", "category", "vendor_claim", "source_reference", "compliance_status", "confidence", "justification"]:
                     if k not in item:
@@ -856,6 +801,7 @@ Return ONLY a JSON array. For each criterion include marks_awarded as the ACTUAL
                     item["max_marks"] = 0.0
                 if "marks_awarded" not in item:
                     item["marks_awarded"] = 0.0
+                item.pop("is_mandatory", None)
                 all_evals.append(CriterionEvaluation(**item))
         except Exception:
             for c in criteria_list:
@@ -864,7 +810,6 @@ Return ONLY a JSON array. For each criterion include marks_awarded as the ACTUAL
                     max_marks=c["max_marks"], vendor_claim="Evaluation error",
                     source_reference="Not found", compliance_status="Not Met",
                     confidence="Low", justification="Parsing failed for this category.",
-                    is_mandatory=c.get("mandatory", False),
                 ))
 
     return all_evals
@@ -953,57 +898,6 @@ def stage4_calculate_scores(
         )
 
     return category_results
-
-
-# ---------------------------------------------------------------------------
-# Stage 4b — Mandatory Disqualifier Checks
-# ---------------------------------------------------------------------------
-
-async def stage4b_check_disqualifiers(
-    bid_text: str, disqualifiers: List[str]
-) -> List[DisqualifierCheck]:
-    if not disqualifiers:
-        return []
-
-    # Smart extraction using disqualifier keywords
-    disq_criteria = [{"criterion": d} for d in disqualifiers]
-    relevant_bid  = _extract_bid_sections(bid_text, disq_criteria, MAX_DISQ_CHARS)
-
-    prompt = f"""Check whether the vendor bid satisfies each mandatory requirement below.
-
-IMPORTANT RULES:
-- For document submission requirements (e.g. "Submission of Bank Guarantee required", "Power of Attorney"),
-  set met=true if the vendor mentions submitting or enclosing it, OR if the bid includes such documents.
-  Set met=false ONLY if the vendor explicitly states they are NOT providing it.
-- For eligibility criteria, set met=true if evidence exists in the bid.
-- Default to met=true when evidence is unclear — only flag met=false on clear non-compliance.
-
-VENDOR BID (relevant sections):
-{relevant_bid}
-
-MANDATORY REQUIREMENTS:
-{json.dumps(disqualifiers, indent=2)}
-
-Return ONLY a JSON array:
-[
-  {{
-    "condition": "<exact requirement text>",
-    "met": true,
-    "note": "<evidence from bid, or 'Not mentioned but no explicit refusal'>"
-  }}
-]"""
-
-    items = _parse_array(await _call(prompt))
-    if not isinstance(items, list):
-        items = []
-    checks = []
-    for item in items:
-        if isinstance(item, dict):
-            cond = item.get("condition", "")
-            met = bool(item.get("met", True))
-            note = item.get("note", "")
-            checks.append(DisqualifierCheck(condition=cond, met=met, note=note))
-    return checks
 
 
 # ---------------------------------------------------------------------------
@@ -1118,22 +1012,11 @@ async def _run_pipeline(
     rfp_scoring_text: str = "",
     prebid_text: str = "",
 ) -> EvaluationReport:
-    criteria_evals      = await stage3_parse_vendor_response(bid_text, rules, rfp_scoring_text)
-    category_results    = stage4_calculate_scores(criteria_evals, rules)
-    disqualifier_checks = await stage4b_check_disqualifiers(
-        bid_text, rules.mandatory_disqualifiers
-    )
+    criteria_evals   = await stage3_parse_vendor_response(bid_text, rules, rfp_scoring_text)
+    category_results = stage4_calculate_scores(criteria_evals, rules)
 
-    failed_disqs            = [d for d in disqualifier_checks if not d.met]
-    failed_mandatory_criteria = [c for c in criteria_evals if c.is_mandatory and c.compliance_status == "Not Met"]
-    disqualified            = bool(failed_disqs) or bool(failed_mandatory_criteria)
-    
-    if failed_disqs:
-        disqualification_reason = failed_disqs[0].condition
-    elif failed_mandatory_criteria:
-        disqualification_reason = f"Mandatory requirement not met: {failed_mandatory_criteria[0].criterion}"
-    else:
-        disqualification_reason = None
+    disqualified            = False
+    disqualification_reason = None
 
     total_score = round(sum(cr.weighted_score for cr in category_results), 2)
     max_score   = round(sum(cat.weight_percent for cat in rules.scoring_categories), 2)
@@ -1167,7 +1050,6 @@ async def _run_pipeline(
         disqualified=disqualified,
         disqualification_reason=disqualification_reason,
         category_results=category_results,
-        disqualifier_checks=disqualifier_checks,
         risk_items=risk_items,
         executive_summary=executive_summary,
         rules=rules,
@@ -1242,7 +1124,6 @@ async def stage2_extract_pqtq_rules(rfp_text: str) -> EvaluationRules:
     chunks = [c for c in chunks if c.strip()][:4]
 
     all_cats: dict[str, dict] = {}
-    all_disq: list[str] = []
     pass_mark = 0.0
     cat_mins: dict[str, dict] = {}
     any_explicit_rules = False
@@ -1254,10 +1135,6 @@ async def stage2_extract_pqtq_rules(rfp_text: str) -> EvaluationRules:
             if chunk_has_rules:
                 any_explicit_rules = True
             else:
-                disqs = data.get("mandatory_disqualifiers", [])
-                for d in _normalize_disqualifiers(disqs):
-                    if d not in all_disq:
-                        all_disq.append(d)
                 continue
 
             scoring_categories = data.get("scoring_categories", [])
@@ -1293,11 +1170,6 @@ async def stage2_extract_pqtq_rules(rfp_text: str) -> EvaluationRules:
                     for sub in cat_subs:
                         if isinstance(sub, dict) and sub.get("criterion", "").lower() not in exist_subs:
                             all_cats[matched_key].setdefault("subcriteria", []).append(sub)
-
-            disqs = data.get("mandatory_disqualifiers", [])
-            for d in _normalize_disqualifiers(disqs):
-                if d not in all_disq:
-                    all_disq.append(d)
 
             thresh = data.get("threshold", {})
             if not isinstance(thresh, dict):
@@ -1344,7 +1216,6 @@ async def stage2_extract_pqtq_rules(rfp_text: str) -> EvaluationRules:
                 subcriteria_list.append(SubCriterion(
                     criterion=s.get("criterion", "Criterion"),
                     max_marks=float(s.get("max_marks") or 0),
-                    mandatory=bool(s.get("mandatory", False)),
                 ))
             else:
                 subcriteria_list.append(SubCriterion(criterion=str(s), max_marks=0))
@@ -1383,7 +1254,6 @@ async def stage2_extract_pqtq_rules(rfp_text: str) -> EvaluationRules:
         rules_found=any_explicit_rules and len(all_cats) > 0,
         scoring_categories=categories,
         threshold=threshold,
-        mandatory_disqualifiers=all_disq,
     )
 
 

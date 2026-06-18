@@ -5,7 +5,6 @@ from typing import Optional, List
 class SubCriterion(BaseModel):
     criterion: str
     max_marks: float
-    mandatory: bool = False
 
 
 class ScoringCategory(BaseModel):
@@ -30,7 +29,6 @@ class EvaluationRules(BaseModel):
     rules_found: bool = True
     scoring_categories: List[ScoringCategory] = []
     threshold: Threshold = Threshold(overall_pass_mark=0)
-    mandatory_disqualifiers: List[str] = []
 
 
 class CriterionEvaluation(BaseModel):
@@ -43,7 +41,6 @@ class CriterionEvaluation(BaseModel):
     compliance_status: str  # "Met", "Not Met"
     confidence: str  # "High", "Medium", "Low"
     justification: str
-    is_mandatory: bool = False
     threshold_logic: str = ""  # "RFP Min (X%)" or "50% Fallback"
     qualification_type: str = ""  # "PQ", "TQ", or "" for standard evaluations
 
@@ -59,12 +56,6 @@ class CategoryResult(BaseModel):
     minimum_required: Optional[float] = None
     criteria: List[CriterionEvaluation] = []
     qualification_type: str = ""  # "PQ", "TQ", or "" for standard evaluations
-
-
-class DisqualifierCheck(BaseModel):
-    condition: str
-    met: bool
-    note: str = ""
 
 
 class RiskItem(BaseModel):
@@ -86,7 +77,6 @@ class EvaluationReport(BaseModel):
     disqualified: bool
     disqualification_reason: Optional[str] = None
     category_results: List[CategoryResult]
-    disqualifier_checks: List[DisqualifierCheck] = []
     risk_items: List[RiskItem] = []
     executive_summary: str
     rules: EvaluationRules

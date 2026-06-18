@@ -315,15 +315,12 @@ export default function ActiveEvaluationPage() {
   const pqCats = report.category_results.filter(cr => cr.qualification_type === 'PQ')
   const tqCats = report.category_results.filter(cr => cr.qualification_type !== 'PQ')
 
-  // PQ checks shown as pass/fail in the vendor card — derived from PQ category results,
-  // falling back to mandatory disqualifier_checks for non-PQTQ evaluations
-  const pqChecks = pqCats.length > 0
-    ? pqCats.map(cr => ({
-        condition: cr.category,
-        met: cr.passed,
-        note: `${Math.round(cr.marks_awarded)}/${cr.max_marks} marks`,
-      }))
-    : (report.disqualifier_checks || [])
+  // PQ checks shown as pass/fail in the vendor card — derived from PQ category results only
+  const pqChecks = pqCats.map(cr => ({
+    condition: cr.category,
+    met: cr.passed,
+    note: `${Math.round(cr.marks_awarded)}/${cr.max_marks} marks`,
+  }))
 
   const vendor = {
     name: vendorName,
@@ -482,13 +479,13 @@ export default function ActiveEvaluationPage() {
 
       {/* AI Recommendation Banner */}
       <div style={{
-        background: !report.passed ? 'linear-gradient(to right, #FFF1F2, #FFE4E6)' : 'linear-gradient(to right, #F0FDF4, #ECFDF5)',
-        border: `1px solid ${!report.passed ? '#FECDD3' : '#A7F3D0'}`,
+        background: 'linear-gradient(to right, #EEF2FF, #E0E7FF)',
+        border: '1px solid #C7D2FE',
         borderRadius: 12, padding: '1.25rem 1.5rem', marginBottom: '1.5rem',
       }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '1rem' }}>
           <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-start', flex: 1 }}>
-            <div style={{ width: 40, height: 40, borderRadius: 10, flexShrink: 0, background: !report.passed ? '#FCA5A5' : '#6EE7B7', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div style={{ width: 40, height: 40, borderRadius: 10, flexShrink: 0, background: '#818CF8', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5">
                 {!report.passed
                   ? <><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></>
@@ -496,10 +493,10 @@ export default function ActiveEvaluationPage() {
               </svg>
             </div>
             <div>
-              <div style={{ fontWeight: 700, fontSize: '0.95rem', color: '#065F46', marginBottom: 4 }}>
+              <div style={{ fontWeight: 700, fontSize: '0.95rem', color: '#3730A3', marginBottom: 4 }}>
                 AI Assessment: {vendorName}
               </div>
-              <div style={{ fontSize: '0.82rem', color: '#047857', marginBottom: '0.875rem' }}>
+              <div style={{ fontSize: '0.82rem', color: '#4338CA', marginBottom: '0.875rem' }}>
                 {report.executive_summary}
               </div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1.25rem' }}>
@@ -509,8 +506,8 @@ export default function ActiveEvaluationPage() {
                   report.risk_items.length === 0 ? 'No risks identified' : `${report.risk_items.length} risk${report.risk_items.length > 1 ? 's' : ''} noted`,
                 ].map((item, i) => (
                   <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#16A34A" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg>
-                    <span style={{ fontSize: '0.8rem', color: '#065F46' }}>{item}</span>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4F46E5" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+                    <span style={{ fontSize: '0.8rem', color: '#3730A3' }}>{item}</span>
                   </div>
                 ))}
               </div>
@@ -631,28 +628,6 @@ export default function ActiveEvaluationPage() {
             )
           })}
 
-          {/* Disqualifiers */}
-          {report.disqualifier_checks?.length > 0 && (
-            <div style={{ marginTop: 4 }}>
-              <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#6B7280', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '.04em' }}>Mandatory Requirements</div>
-              {report.disqualifier_checks.map((d, i) => (
-                <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '0.65rem 1rem', borderRadius: 8, background: d.met ? '#F0FDF4' : '#FFF1F2', border: `1px solid ${d.met ? '#BBF7D0' : '#FECDD3'}`, marginBottom: 6 }}>
-                  <div style={{ width: 18, height: 18, borderRadius: '50%', flexShrink: 0, marginTop: 1, background: d.met ? '#22C55E' : '#EF4444', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3">
-                      {d.met ? <polyline points="20 6 9 17 4 12"/> : <><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></>}
-                    </svg>
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: '0.8rem', fontWeight: 600, color: '#111827' }}>{d.condition}</div>
-                    {d.note && <div style={{ fontSize: '0.72rem', color: '#6B7280', marginTop: 2 }}>{d.note}</div>}
-                  </div>
-                  <span style={{ fontSize: '0.68rem', fontWeight: 700, flexShrink: 0, color: d.met ? '#16A34A' : '#DC2626' }}>
-                    {d.met ? 'Met' : 'NOT MET'}
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
         </div>
       </div>
 
