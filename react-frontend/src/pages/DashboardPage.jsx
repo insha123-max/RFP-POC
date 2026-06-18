@@ -218,7 +218,7 @@ function EmptyState({ onStart }) {
 /* ── Main Page ───────────────────────────────────────────────────────────── */
 export default function DashboardPage() {
   const navigate = useNavigate()
-  const { history, setCurrentEvaluation, deleteFromHistory, clearAllHistory, pqtqCheckHistory, deletePQTQCheck } = useEvaluation()
+  const { history, setCurrentEvaluation, deleteFromHistory, clearAllHistory, pqtqCheckHistory, deletePQTQCheck, clearAllPQTQChecks } = useEvaluation()
 
   // Merge both lists, sorted by most recent first
   const combined = [
@@ -311,12 +311,12 @@ export default function DashboardPage() {
                   )}
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                  {history.length > 0 && (
+                  {(history.length > 0 || pqtqCheckHistory.length > 0) && (
                     confirmDeleteAll ? (
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                         <span style={{ fontSize: '0.75rem', color: '#6B7280' }}>Delete all evals?</span>
                         <button style={{ fontSize: '0.75rem', fontWeight: 600, color: '#fff', background: '#EF4444', border: 'none', borderRadius: 6, padding: '3px 10px', cursor: 'pointer' }}
-                          onClick={() => { clearAllHistory(); setConfirmDeleteAll(false); setPage(0) }}>Confirm</button>
+                          onClick={() => { clearAllHistory(); clearAllPQTQChecks(); setConfirmDeleteAll(false); setPage(0) }}>Confirm</button>
                         <button style={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', background: '#F3F4F6', border: 'none', borderRadius: 6, padding: '3px 10px', cursor: 'pointer' }}
                           onClick={() => setConfirmDeleteAll(false)}>Cancel</button>
                       </div>
