@@ -8,10 +8,11 @@ function loadLS(key, fallback) {
 }
 
 export function EvaluationProvider({ children }) {
-  const [report, setReportState]   = useState(() => loadLS('eval_report', null))
-  const [rfpName, setRfpNameState] = useState(() => loadLS('eval_rfpName', ''))
-  const [bidName, setBidNameState] = useState(() => loadLS('eval_bidName', ''))
-  const [history, setHistory]      = useState(() => loadLS('eval_history', []))
+  const [report, setReportState]         = useState(() => loadLS('eval_report', null))
+  const [rfpName, setRfpNameState]       = useState(() => loadLS('eval_rfpName', ''))
+  const [bidName, setBidNameState]       = useState(() => loadLS('eval_bidName', ''))
+  const [history, setHistory]            = useState(() => loadLS('eval_history', []))
+  const [pqtqCheckHistory, setPQTQChecks] = useState(() => loadLS('pqtq_checks', []))
 
   const setReport  = r => { setReportState(r);  localStorage.setItem('eval_report',  JSON.stringify(r)) }
   const setRfpName = n => { setRfpNameState(n); localStorage.setItem('eval_rfpName', JSON.stringify(n)) }
@@ -29,7 +30,6 @@ export function EvaluationProvider({ children }) {
     setHistory(prev => {
       const next = prev.filter(e => e.id !== id)
       localStorage.setItem('eval_history', JSON.stringify(next))
-      // If the deleted entry is the currently loaded report, clear it
       const deleted = prev.find(e => e.id === id)
       if (deleted && deleted.report === JSON.parse(localStorage.getItem('eval_report') || 'null')) {
         setReport(next[0]?.report ?? null)
@@ -51,8 +51,34 @@ export function EvaluationProvider({ children }) {
     setBidName(entry.bidName)
   }
 
+  // PQTQ Check history (separate from AI evaluation history)
+  const addPQTQCheck = entry => {
+    setPQTQChecks(prev => {
+      const next = [entry, ...prev].slice(0, 50)
+      localStorage.setItem('pqtq_checks', JSON.stringify(next))
+      return next
+    })
+  }
+
+  const deletePQTQCheck = id => {
+    setPQTQChecks(prev => {
+      const next = prev.filter(e => e.id !== id)
+      localStorage.setItem('pqtq_checks', JSON.stringify(next))
+      return next
+    })
+  }
+
+  const clearAllPQTQChecks = () => {
+    setPQTQChecks([])
+    localStorage.removeItem('pqtq_checks')
+  }
+
   return (
-    <Ctx.Provider value={{ report, setReport, rfpName, setRfpName, bidName, setBidName, history, addToHistory, deleteFromHistory, clearAllHistory, setCurrentEvaluation }}>
+    <Ctx.Provider value={{
+      report, setReport, rfpName, setRfpName, bidName, setBidName,
+      history, addToHistory, deleteFromHistory, clearAllHistory, setCurrentEvaluation,
+      pqtqCheckHistory, addPQTQCheck, deletePQTQCheck, clearAllPQTQChecks,
+    }}>
       {children}
     </Ctx.Provider>
   )

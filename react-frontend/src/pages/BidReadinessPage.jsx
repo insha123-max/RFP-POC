@@ -1,5 +1,7 @@
 import { useState, useRef } from 'react'
 import { fetchBidReadiness } from '../api'
+import { useEvaluation } from '../context/EvaluationContext'
+import { PQTQReportModal } from '../components/PQTQReportModal'
 
 const PQ_COLOR  = '#92400E'
 const PQ_BG     = '#FFFBEB'
@@ -168,6 +170,7 @@ function SummaryStrip({ pqItems, tqItems, checked }) {
 
 /* ══════════════════════════════════════════════════════════════════════════ */
 export default function BidReadinessPage() {
+  const { addPQTQCheck } = useEvaluation()
   const [rfpFile,     setRfpFile]     = useState(null)
   const [addFile,     setAddFile]     = useState(null)
   const [loading,     setLoading]     = useState(false)
@@ -177,6 +180,7 @@ export default function BidReadinessPage() {
   const [pqOpen,      setPqOpen]      = useState(true)
   const [tqOpen,      setTqOpen]      = useState(true)
   const [scoreResult, setScoreResult] = useState(null)
+  const [showReport,  setShowReport]  = useState(false)
   const scoreRef = useRef(null)
 
   // Custom items state
@@ -256,7 +260,18 @@ export default function BidReadinessPage() {
       recColor = '#DC2626'
     }
 
-    setScoreResult({ pqMet, pqTotal, pqPct, pqPass, tqCriteriaMet, tqCriteriaTotal, tqPct, overall, missed, recommendation, recColor })
+    const result = { pqMet, pqTotal, pqPct, pqPass, tqCriteriaMet, tqCriteriaTotal, tqPct, overall, missed, recommendation, recColor }
+    setScoreResult(result)
+    addPQTQCheck({
+      id: Date.now(),
+      rfpName: rfpFile?.name || 'Unknown RFP',
+      timestamp: new Date().toISOString(),
+      pqTotal, pqMet, pqPct, pqPass,
+      tqTotal: tqCriteriaTotal, tqMet: tqCriteriaMet, tqPct, overall,
+      recommendation, recColor,
+      pqItems: allPQItems.map(item => ({ id: item.id, criterion: item.criterion, detail: item.detail || '', met: !!checked[item.id] })),
+      tqItems: allTQItems.map(item => ({ id: item.id, criterion: item.criterion, detail: item.detail || '', category: item.category, met: !!checked[item.id] })),
+    })
     setTimeout(() => scoreRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80)
   }
 
@@ -667,12 +682,23 @@ export default function BidReadinessPage() {
               <div style={{ fontSize: '1rem', fontWeight: 800, color: '#fff' }}>PQTQ Score</div>
               <div style={{ fontSize: '0.72rem', color: 'rgba(255,255,255,.65)', marginTop: 2 }}>{rfpFile?.name}</div>
             </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <button
+                onClick={() => setShowReport(true)}
+                style={{ padding: '6px 14px', borderRadius: 7, border: '1px solid rgba(255,255,255,.4)', background: 'rgba(255,255,255,.15)', color: '#fff', fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
+                </svg>
+                Generate Report
+              </button>
             <span style={{
               padding: '4px 12px', borderRadius: 999, fontWeight: 700, fontSize: '0.78rem',
               background: scoreResult.pqPass ? 'rgba(34,197,94,.25)' : 'rgba(239,68,68,.25)',
               color: scoreResult.pqPass ? '#86EFAC' : '#FCA5A5',
               border: `1px solid ${scoreResult.pqPass ? 'rgba(34,197,94,.4)' : 'rgba(239,68,68,.4)'}`,
             }}>{scoreResult.pqPass ? '✓ PQ Eligible' : '✗ PQ Not Met'}</span>
+            </div>
           </div>
 
           {/* stats row — 3 equal cols */}
@@ -716,6 +742,22 @@ export default function BidReadinessPage() {
             </div>
           )}
         </div>
+      )}
+
+      {showReport && scoreResult && (
+        <PQTQReportModal
+          entry={{
+            rfpName: rfpFile?.name || 'RFP Document',
+            timestamp: new Date().toISOString(),
+            pqPct: scoreResult.pqPct, pqMet: scoreResult.pqMet, pqTotal: scoreResult.pqTotal, pqPass: scoreResult.pqPass,
+            tqPct: scoreResult.tqPct, tqMet: scoreResult.tqCriteriaMet, tqTotal: scoreResult.tqCriteriaTotal,
+            overall: scoreResult.overall,
+            recommendation: scoreResult.recommendation, recColor: scoreResult.recColor,
+            pqItems: allPQItems.map(item => ({ id: item.id, criterion: item.criterion, detail: item.detail || '', met: !!checked[item.id] })),
+            tqItems: allTQItems.map(item => ({ id: item.id, criterion: item.criterion, detail: item.detail || '', category: item.category, met: !!checked[item.id] })),
+          }}
+          onClose={() => setShowReport(false)}
+        />
       )}
     </div>
   )
