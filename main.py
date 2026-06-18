@@ -333,7 +333,19 @@ async def apply_override(request: OverrideRequest):
                 (cat_result.marks_awarded / cat_result.max_marks) * cat_result.weight_percent, 2
             ) if cat_result.max_marks else 0.0
 
-    # Recalculate overall totals
+    # Recalculate overall totals and disqualification status
+    all_criteria = [ce for cr in report.category_results for ce in cr.criteria]
+    failed_disqs = [d for d in report.disqualifier_checks if not d.met]
+    failed_mandatory_criteria = [c for c in all_criteria if c.is_mandatory and c.compliance_status == "Not Met"]
+    
+    report.disqualified = bool(failed_disqs) or bool(failed_mandatory_criteria)
+    if failed_disqs:
+        report.disqualification_reason = failed_disqs[0].condition
+    elif failed_mandatory_criteria:
+        report.disqualification_reason = f"Mandatory requirement not met: {failed_mandatory_criteria[0].criterion}"
+    else:
+        report.disqualification_reason = None
+
     report.total_score = round(
         sum(cr.weighted_score for cr in report.category_results), 2
     )

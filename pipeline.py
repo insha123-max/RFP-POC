@@ -1125,8 +1125,15 @@ async def _run_pipeline(
     )
 
     failed_disqs            = [d for d in disqualifier_checks if not d.met]
-    disqualified            = bool(failed_disqs)
-    disqualification_reason = failed_disqs[0].condition if disqualified else None
+    failed_mandatory_criteria = [c for c in criteria_evals if c.is_mandatory and c.compliance_status == "Not Met"]
+    disqualified            = bool(failed_disqs) or bool(failed_mandatory_criteria)
+    
+    if failed_disqs:
+        disqualification_reason = failed_disqs[0].condition
+    elif failed_mandatory_criteria:
+        disqualification_reason = f"Mandatory requirement not met: {failed_mandatory_criteria[0].criterion}"
+    else:
+        disqualification_reason = None
 
     total_score = round(sum(cr.weighted_score for cr in category_results), 2)
     max_score   = round(sum(cat.weight_percent for cat in rules.scoring_categories), 2)

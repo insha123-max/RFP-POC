@@ -231,7 +231,7 @@ function RequirementsTable({ criteria, pqChecks = [], title = 'Requirements Asse
                     {c.name}{qualBadge(c.qualification_type)}
                   </div>
                   {c.justification && (
-                    <div style={{ fontSize: '0.7rem', color: '#9CA3AF', marginTop: 2 }}>{c.justification.slice(0, 80)}{c.justification.length > 80 ? '…' : ''}</div>
+                    <div style={{ fontSize: '0.73rem', color: '#6B7280', marginTop: 3, lineHeight: 1.45 }}>{c.justification}</div>
                   )}
                 </td>
                 <td style={{ fontSize: '0.78rem', color: '#6B7280' }}>{c.category}</td>
