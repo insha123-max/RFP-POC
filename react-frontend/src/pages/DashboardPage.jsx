@@ -117,7 +117,7 @@ function EvalCard({ entry, onView, onReport, onDelete }) {
         </div>
       </div>
       <div style={{ display: 'flex', gap: '0.75rem' }}>
-        <button className="btn btn-primary" style={{ flex: 1, justifyContent: 'center', fontSize: '0.82rem', padding: '0.55rem 1rem' }} onClick={onView}>View Results →</button>
+        <button className="btn btn-primary" style={{ display: 'inline-flex', width: 'auto', fontSize: '0.78rem', padding: '0.45rem 0.9rem' }} onClick={onView}>View Results →</button>
         <button className="btn-ghost" style={{ flexShrink: 0, fontSize: '0.82rem', color: '#6B7280', fontWeight: 600 }} onClick={onReport}>View Report</button>
       </div>
     </div>

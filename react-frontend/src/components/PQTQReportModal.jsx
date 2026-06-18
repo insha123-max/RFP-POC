@@ -33,14 +33,14 @@ export function PQTQReportModal({ entry, onClose }) {
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: '#F3F4F6', zIndex: 2000, overflowY: 'auto' }}>
-      <div style={{ maxWidth: 960, margin: '0 auto', padding: '1.75rem 1.5rem 3rem' }}>
+      <div style={{ padding: '1.75rem 2rem 3rem' }}>
       <div style={{ background: '#fff', borderRadius: 16, boxShadow: '0 4px 24px rgba(0,0,0,.08)' }}>
 
         {/* Everything below this div is captured for print */}
         <div id="pqtq-rpt-area">
 
           {/* ── Gradient header ── */}
-          <div style={{ background: 'linear-gradient(135deg,#4F46E5,#7C3AED)', padding: '1.5rem', borderRadius: '16px 16px 0 0' }}>
+          <div style={{ background: 'linear-gradient(135deg,#1a1a1a,#2d2d2d)', padding: '1.5rem', borderRadius: '16px 16px 0 0' }}>
             <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
               <div>
                 <div style={{ fontSize: '1.15rem', fontWeight: 800, color: '#fff' }}>PQTQ Checker Report</div>

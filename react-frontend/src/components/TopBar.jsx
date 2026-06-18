@@ -171,69 +171,63 @@ export default function TopBar({ sidebarOpen }) {
             {showNotif && (
               <div style={{
                 position: 'absolute', top: 'calc(100% + 8px)', right: 0,
-                width: 340, background: '#fff', borderRadius: 12,
-                border: '1px solid #E5E7EB', boxShadow: '0 8px 28px rgba(0,0,0,.12)',
+                width: 320, background: '#fff', borderRadius: 10,
+                border: '1px solid #E5E7EB', boxShadow: '0 4px 16px rgba(0,0,0,.08)',
                 zIndex: 9999, overflow: 'hidden',
               }}>
                 {/* Header */}
-                <div style={{ padding: '14px 16px', borderBottom: '1px solid #F3F4F6' }}>
-                  <div style={{ fontWeight: 700, fontSize: '0.88rem', color: '#111827', marginBottom: 10 }}>Evaluation Summary</div>
-                  <div style={{ display: 'flex', gap: 8 }}>
-                    <div style={{
-                      flex: 1, padding: '10px 12px', borderRadius: 8,
-                      background: '#DCFCE7', textAlign: 'center',
-                    }}>
-                      <div style={{ fontSize: '1.5rem', fontWeight: 900, color: '#15803D', lineHeight: 1 }}>{passedCount}</div>
-                      <div style={{ fontSize: '0.68rem', color: '#166534', fontWeight: 600, marginTop: 3 }}>Bids Passed</div>
-                    </div>
-                    <div style={{
-                      flex: 1, padding: '10px 12px', borderRadius: 8,
-                      background: '#FEE2E2', textAlign: 'center',
-                    }}>
-                      <div style={{ fontSize: '1.5rem', fontWeight: 900, color: '#DC2626', lineHeight: 1 }}>{failedCount}</div>
-                      <div style={{ fontSize: '0.68rem', color: '#991B1B', fontWeight: 600, marginTop: 3 }}>Bids Failed</div>
-                    </div>
-                    <div style={{
-                      flex: 1, padding: '10px 12px', borderRadius: 8,
-                      background: '#EEF2FF', textAlign: 'center',
-                    }}>
-                      <div style={{ fontSize: '1.5rem', fontWeight: 900, color: '#4F46E5', lineHeight: 1 }}>{history.length}</div>
-                      <div style={{ fontSize: '0.68rem', color: '#3730A3', fontWeight: 600, marginTop: 3 }}>Total Evals</div>
-                    </div>
+                <div style={{ padding: '12px 14px', borderBottom: '1px solid #F3F4F6' }}>
+                  <div style={{ fontWeight: 600, fontSize: '0.78rem', color: '#6B7280', marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Evaluation Summary</div>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    {[
+                      { value: passedCount,    label: 'Passed',     dot: '#22C55E' },
+                      { value: failedCount,    label: 'Failed',     dot: '#EF4444' },
+                      { value: history.length, label: 'Total Evals', dot: '#9CA3AF' },
+                    ].map(s => (
+                      <div key={s.label} style={{
+                        flex: 1, padding: '8px 10px', borderRadius: 7,
+                        background: '#F9FAFB', border: '1px solid #F3F4F6', textAlign: 'center',
+                      }}>
+                        <div style={{ fontSize: '1.15rem', fontWeight: 700, color: '#374151', lineHeight: 1 }}>{s.value}</div>
+                        <div style={{ fontSize: '0.65rem', color: '#9CA3AF', fontWeight: 500, marginTop: 3, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 3 }}>
+                          <span style={{ width: 5, height: 5, borderRadius: '50%', background: s.dot, display: 'inline-block', flexShrink: 0 }} />
+                          {s.label}
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
 
                 {/* Recent evaluations list */}
-                <div style={{ maxHeight: 260, overflowY: 'auto' }}>
+                <div style={{ maxHeight: 240, overflowY: 'auto' }}>
                   {history.length === 0 ? (
-                    <div style={{ padding: '20px 16px', textAlign: 'center', fontSize: '0.8rem', color: '#9CA3AF' }}>
+                    <div style={{ padding: '18px 14px', textAlign: 'center', fontSize: '0.78rem', color: '#9CA3AF' }}>
                       No evaluations yet
                     </div>
                   ) : history.slice(0, 10).map(entry => (
                     <button key={entry.id} onClick={() => { pickResult(entry); setShowNotif(false) }} style={{
                       width: '100%', textAlign: 'left', background: 'none', border: 'none',
-                      borderBottom: '1px solid #F9FAFB', padding: '9px 14px',
-                      cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10,
+                      borderBottom: '1px solid #F9FAFB', padding: '8px 14px',
+                      cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 9,
                     }}
                     onMouseEnter={e => e.currentTarget.style.background = '#F9FAFB'}
                     onMouseLeave={e => e.currentTarget.style.background = 'none'}
                     >
                       <div style={{
-                        width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
+                        width: 6, height: 6, borderRadius: '50%', flexShrink: 0, marginTop: 1,
                         background: entry.passed ? '#22C55E' : '#EF4444',
                       }} />
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: '0.8rem', fontWeight: 600, color: '#111827', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        <div style={{ fontSize: '0.78rem', fontWeight: 500, color: '#374151', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           {entry.rfpName || 'Untitled RFP'}
                         </div>
-                        <div style={{ fontSize: '0.68rem', color: '#9CA3AF' }}>
+                        <div style={{ fontSize: '0.65rem', color: '#B0B7C3' }}>
                           {entry.timestamp ? new Date(entry.timestamp).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : ''} · {entry.evaluationType || 'General'}
                         </div>
                       </div>
                       <span style={{
-                        fontSize: '0.68rem', fontWeight: 700, padding: '2px 7px', borderRadius: 4, flexShrink: 0,
-                        background: entry.passed ? '#DCFCE7' : '#FEE2E2',
-                        color: entry.passed ? '#15803D' : '#DC2626',
+                        fontSize: '0.65rem', fontWeight: 600, padding: '1px 6px', borderRadius: 4, flexShrink: 0,
+                        background: '#F3F4F6', color: '#6B7280',
                       }}>{entry.score ?? '?'}%</span>
                     </button>
                   ))}
@@ -241,10 +235,10 @@ export default function TopBar({ sidebarOpen }) {
 
                 {/* Footer */}
                 {history.length > 0 && (
-                  <div style={{ padding: '10px 14px', borderTop: '1px solid #F3F4F6', textAlign: 'center' }}>
+                  <div style={{ padding: '9px 14px', borderTop: '1px solid #F3F4F6', textAlign: 'center' }}>
                     <button onClick={() => { navigate('/analytics'); setShowNotif(false) }} style={{
                       background: 'none', border: 'none', cursor: 'pointer',
-                      fontSize: '0.75rem', color: '#4F46E5', fontWeight: 600,
+                      fontSize: '0.72rem', color: '#9CA3AF', fontWeight: 500,
                     }}>View all in Analytics →</button>
                   </div>
                 )}

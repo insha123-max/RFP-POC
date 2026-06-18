@@ -68,7 +68,7 @@ function qualBadge(qt) {
 }
 
 /* ── Vendor Card ────────────────────────────────────────────────────────── */
-function VendorCard({ vendor, pqChecks = [] }) {
+function VendorCard({ vendor, pqChecks = [], isPQTQ = false }) {
   return (
     <div style={{
       background: '#fff', borderRadius: 12, padding: '1.5rem',
@@ -97,8 +97,8 @@ function VendorCard({ vendor, pqChecks = [] }) {
         <div style={{ fontSize: '0.78rem', color: '#6B7280', marginTop: 4 }}>Overall Score</div>
       </div>
 
-      {/* PQ — Pre-Qualification summary (generalised, like TQ) */}
-      {pqChecks.length > 0 && (() => {
+      {/* PQ eligibility summary — only shown in PQTQ mode */}
+      {isPQTQ && pqChecks.length > 0 && (() => {
         const passed = pqChecks.filter(c => c.met).length
         const total  = pqChecks.length
         const pct    = Math.round((passed / total) * 100)
@@ -121,17 +121,17 @@ function VendorCard({ vendor, pqChecks = [] }) {
                 <div style={{ height: '100%', borderRadius: 999, background: barColor, width: `${pct}%`, transition: 'width .8s' }} />
               </div>
               <div style={{ fontSize: '0.68rem', color: '#9CA3AF', marginTop: 4 }}>
-                {allPass ? 'All eligibility criteria met' : `${total - passed} criteria not met — see Requirements Assessment`}
+                {allPass ? 'All eligibility criteria met' : `${total - passed} not met — see Requirements Assessment`}
               </div>
             </div>
           </div>
         )
       })()}
 
-      {/* TQ — Technical Qualification scored categories */}
+      {/* Scoring categories */}
       {vendor.categories.length > 0 && (
         <div>
-          {pqChecks.length > 0 && (
+          {isPQTQ && pqChecks.length > 0 && (
             <div style={{ fontSize: '0.68rem', fontWeight: 700, color: '#5B21B6', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
               {qualBadge('TQ')} Technical Qualification
             </div>
@@ -140,7 +140,7 @@ function VendorCard({ vendor, pqChecks = [] }) {
             {vendor.categories.map(cat => (
               <div key={cat.name}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                  <span style={{ fontSize: '0.8rem', color: '#374151' }}>{cat.name}{cat.qualification_type && !pqChecks.length ? qualBadge(cat.qualification_type) : null}</span>
+                  <span style={{ fontSize: '0.8rem', color: '#374151' }}>{cat.name}</span>
                   <span style={{ fontSize: '0.72rem', fontWeight: 700, padding: '1px 8px', borderRadius: 4, background: '#EEF2FF', color: '#4F46E5' }}>
                     {cat.score}/100
                   </span>
@@ -567,7 +567,7 @@ export default function ActiveEvaluationPage() {
       {/* Vendor Card */}
       <div style={{ marginBottom: '1.75rem' }}>
         <h2 style={{ fontWeight: 700, fontSize: '1.05rem', color: '#111827', marginBottom: '1.25rem' }}>Vendor Evaluation</h2>
-        <VendorCard vendor={vendor} pqChecks={pqChecks} />
+        <VendorCard vendor={vendor} pqChecks={pqChecks} isPQTQ={isPQTQ} />
       </div>
 
       {/* Pass Criteria Breakdown */}
@@ -672,7 +672,7 @@ export default function ActiveEvaluationPage() {
         </div>
       </div>
 
-      {/* Requirements Assessment — split by PQ / TQ in PQTQ mode */}
+      {/* Requirements Assessment — split PQ/TQ for PQTQ mode, flat for General */}
       {isPQTQ ? (
         <>
           {pqChecks.length > 0 && (
@@ -692,7 +692,11 @@ export default function ActiveEvaluationPage() {
           )}
         </>
       ) : (
-        <RequirementsTable criteria={criteria} pqChecks={pqChecks} />
+        <RequirementsTable
+          criteria={criteria}
+          pqChecks={[]}
+          title="Requirements Assessment"
+        />
       )}
 
       {/* Pre-Bid Q&A Clarifications */}

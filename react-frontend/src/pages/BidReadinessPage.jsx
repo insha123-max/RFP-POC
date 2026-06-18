@@ -21,15 +21,15 @@ function FileZone({ label, hint, file, onFile, required }) {
       onDrop={e => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) onFile(f) }}
       onClick={() => ref.current.click()}
       style={{
-        border: `2px dashed ${file ? '#4F46E5' : '#D1D5DB'}`,
+        border: `2px dashed ${file ? '#22C55E' : '#D1D5DB'}`,
         borderRadius: 10, padding: '1.1rem 1rem', cursor: 'pointer',
-        background: file ? '#F5F3FF' : '#FAFAFA', textAlign: 'center', transition: 'all .15s',
+        background: file ? '#F0FDF4' : '#FAFAFA', textAlign: 'center', transition: 'all .15s',
       }}
     >
       <input ref={ref} type="file" accept=".pdf,.doc,.docx,.pptx" style={{ display: 'none' }}
         onChange={e => e.target.files[0] && onFile(e.target.files[0])} />
       <div style={{ fontSize: '1.3rem', marginBottom: 3 }}>{file ? '📄' : '📂'}</div>
-      <div style={{ fontWeight: 600, fontSize: '0.82rem', color: file ? '#4F46E5' : '#374151' }}>
+      <div style={{ fontWeight: 600, fontSize: '0.82rem', color: file ? '#16A34A' : '#374151' }}>
         {file ? file.name : label}
       </div>
       <div style={{ fontSize: '0.7rem', color: '#9CA3AF', marginTop: 2 }}>
@@ -404,10 +404,10 @@ export default function BidReadinessPage() {
             {/* CTA */}
             <button onClick={handleAnalyze} disabled={loading || !rfpFile} style={{
               width: '100%', padding: '0.78rem', borderRadius: 9, border: 'none',
-              background: rfpFile ? '#5C6BC0' : '#E2E5EF',
+              background: rfpFile ? '#F26522' : '#E2E5EF',
               color: rfpFile ? '#fff' : '#B0B8CC', fontWeight: 700, fontSize: '0.84rem',
               cursor: rfpFile ? 'pointer' : 'not-allowed', transition: 'all .18s',
-              boxShadow: rfpFile ? '0 4px 14px rgba(92,107,192,.28)' : 'none',
+              boxShadow: rfpFile ? '0 4px 14px rgba(242,101,34,.3)' : 'none',
               display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
               fontFamily: 'inherit',
             }}>

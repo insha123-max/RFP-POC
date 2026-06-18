@@ -200,6 +200,7 @@ _SCORING_KEYWORDS = [
 # High-confidence regex anchors that indicate we are inside an RFP scoring section.
 # Used to skip past irrelevant header/boilerplate in large documents.
 _SCORING_ANCHORS = [
+    # GenAI/tech-specific RFP patterns
     r"minimum\s+qualifying\s+marks\s*:?\s*bidder\s+must\s+score",
     r"scoring\s+summary",
     r"70%\s+in\s+each\s+category\s+separately",
@@ -209,6 +210,15 @@ _SCORING_ANCHORS = [
     r"\d+\s+or\s+more\s+production\s+gen.?ai",
     r"maximum\s+marks.*criterion.*shall\s+be\s+\d+",
     r"marks\s+allocated\s+to\s+categor",
+    # Generic government/QCBS RFP patterns
+    r"evaluation\s+sub.?criteria.*max(?:imum)?\.?\s*marks",
+    r"s\.?\s*no\.?\s+evaluation\s+(?:sub.?)?criteria",
+    r"absolute\s+technical\s+score.*out\s+of\s+max",
+    r"minimum\s+of\s+\d+\s+marks.*technical\s+evaluation",
+    r"bidder\s+must\s+get\s+a\s+minimum",
+    r"evaluation\s+criteria\s+in\s+section\s+(?:vii|7)",
+    r"evaluation\s*/\s*scoring\s+criteria",
+    r"marks\s+(?:out\s+of|out\s+of\s+\d+).*technical",
 ]
 
 
@@ -261,7 +271,7 @@ def _extract_scoring_sections(text: str, max_chars: int) -> str:
 
     # ── Fallback: keyword-frequency ranking ───────────────────────────────
     lines = text.splitlines()
-    scored: list[tuple[int, int, str]] = []
+    scored: list[tuple[int, int, int, int, str]] = []
 
     for i, line in enumerate(lines):
         ll = line.lower()
@@ -269,7 +279,7 @@ def _extract_scoring_sections(text: str, max_chars: int) -> str:
         if hits:
             start = max(0, i - 1)
             end   = min(len(lines), i + 4)
-            scored.append((hits, i, "\n".join(lines[start:end])))
+            scored.append((hits, i, start, end, "\n".join(lines[start:end])))
 
     scored.sort(key=lambda x: -x[0])
 
@@ -277,9 +287,10 @@ def _extract_scoring_sections(text: str, max_chars: int) -> str:
     result: list[tuple[int, str]] = []
     total = 0
 
-    for hits, idx, block in scored:
+    for hits, idx, start, end, block in scored:
         if idx not in seen and total + len(block) <= max_chars:
-            seen.add(idx)
+            # Mark all lines in this context window as seen to prevent overlapping duplicates
+            seen.update(range(start, end))
             result.append((idx, block))
             total += len(block)
 
@@ -310,7 +321,7 @@ def _extract_bid_sections(bid_text: str, criteria_list: list, max_chars: int) ->
     ])
 
     lines = bid_text.splitlines()
-    scored: list[tuple[int, int, str]] = []
+    scored: list[tuple[int, int, int, int, str]] = []
 
     for i, line in enumerate(lines):
         ll = line.lower()
@@ -318,7 +329,7 @@ def _extract_bid_sections(bid_text: str, criteria_list: list, max_chars: int) ->
         if hits:
             start = max(0, i - 2)
             end   = min(len(lines), i + 5)   # wider context window for bids
-            scored.append((hits, i, "\n".join(lines[start:end])))
+            scored.append((hits, i, start, end, "\n".join(lines[start:end])))
 
     scored.sort(key=lambda x: -x[0])
 
@@ -326,14 +337,22 @@ def _extract_bid_sections(bid_text: str, criteria_list: list, max_chars: int) ->
     result: list[tuple[int, str]] = []
     total = 0
 
-    for hits, idx, block in scored:
+    for hits, idx, start, end, block in scored:
         if idx not in seen and total + len(block) <= max_chars:
-            seen.add(idx)
+            # Mark all lines in this context window as seen to prevent overlapping duplicates
+            seen.update(range(start, end))
             result.append((idx, block))
             total += len(block)
 
     result.sort(key=lambda x: x[0])
     extracted = "\n".join(b for _, b in result)
+
+    # Always prepend the first 400 chars of the bid (cover page / bidder identity)
+    # so eligibility checks can see who the bidder is regardless of keyword ranking.
+    header = bid_text[:400]
+    if header.strip() and header not in extracted:
+        extracted = header + "\n...\n" + extracted
+
     return extracted if extracted.strip() else bid_text[:max_chars]
 
 
@@ -343,21 +362,23 @@ def _extract_bid_sections(bid_text: str, criteria_list: list, max_chars: int) ->
 
 def _rfp_extract_prompt(chunk: str) -> str:
     return (
-        f"You are reading a tender/RFP document section. Your task is to extract the SCORING MATRIX only.\n\n"
+        f"You are reading a tender/RFP document section. Extract ALL evaluation criteria — both scored and eligibility.\n\n"
         f"{chunk}\n\n"
-        f"STRICT RULES — read carefully before responding:\n\n"
-        f"RULE 0 — THE MOST IMPORTANT RULE:\n"
-        f"  Set rules_found=false and return EMPTY scoring_categories if the document does NOT explicitly "
-        f"state numeric marks, points, scores, or weightage against each criterion. "
-        f"A document that merely lists requirements, questions, or section headings WITHOUT attaching "
-        f"numeric marks to them is NOT a scoring rubric. Do NOT invent, guess, or assume any marks.\n"
-        f"  Examples that should return rules_found=false:\n"
-        f"    - 'Please provide your company overview and team details' (no marks stated)\n"
-        f"    - 'Section 3: Technical Approach — describe your methodology' (no marks stated)\n"
-        f"  Examples that should return rules_found=true:\n"
-        f"    - 'Technical Experience: max 20 marks'\n"
-        f"    - 'Criterion 1.a: GenAI Use Cases — 10 points'\n\n"
-        f"RULE 1: Do NOT group categories under a single parent. Each scoring category is independent.\n"
+        f"=== PART A — MANDATORY_DISQUALIFIERS (binary pass/fail eligibility, no marks needed) ===\n"
+        f"ALWAYS extract these as individual strings in mandatory_disqualifiers, even if no numeric marks exist:\n"
+        f"  • Financial requirements: minimum turnover, net worth, EMD/bid security amounts\n"
+        f"  • Registrations/certifications explicitly required (e.g. ISO 27001, GeM registration)\n"
+        f"  • Experience minimums (e.g. 'Minimum 3 years experience in X')\n"
+        f"  • Manpower / team size minimums\n"
+        f"  • Any criterion labeled as mandatory/compulsory/must-meet/eligibility\n"
+        f"Rules: Each entry ≤15 words, state the requirement only (never write 'not found' or 'not specified'), "
+        f"omit if amount/threshold is entirely unspecified.\n\n"
+        f"=== PART B — SCORING_CATEGORIES (criteria with explicit numeric marks) ===\n"
+        f"RULE 0 — MOST IMPORTANT:\n"
+        f"  Set rules_found=true ONLY if the document explicitly states numeric marks, points, scores, or weightage.\n"
+        f"  Do NOT invent or guess marks. A list of requirements without attached numbers is NOT a scoring rubric.\n"
+        f"  Part A (mandatory_disqualifiers) is ALWAYS populated regardless of rules_found.\n"
+        f"RULE 1: Each scoring category is independent — do not group under a single parent.\n"
         f"RULE 2: subcriteria must be a FLAT list — no nesting.\n"
         f"RULE 3: Preserve exact criterion names and prefixes as they appear in the document.\n"
         f"RULE 4: Set mandatory=true only for criteria the document explicitly labels as mandatory/compulsory/must-meet.\n"
@@ -366,9 +387,11 @@ def _rfp_extract_prompt(chunk: str) -> str:
         f"Return ONLY JSON:\n"
         f'{{"rules_found":true,"scoring_categories":[{{"category":"Category Name","max_marks":70,"weight_percent":70,'
         f'"subcriteria":[{{"criterion":"Sub-Criterion Name","max_marks":20,"mandatory":false}}]}}],'
-        f'"threshold":{{"overall_pass_mark":70,"category_minimums":[]}},"mandatory_disqualifiers":[]}}\n\n'
-        f"If no explicit numeric marks exist anywhere in this text: "
-        f'return exactly {{"rules_found":false,"scoring_categories":[],"threshold":{{"overall_pass_mark":0,"category_minimums":[]}},"mandatory_disqualifiers":[]}}'
+        f'"threshold":{{"overall_pass_mark":70,"category_minimums":[]}},'
+        f'"mandatory_disqualifiers":["Minimum turnover Rs. X crores","ISO 27001 certification required"]}}\n\n'
+        f"If no explicit numeric marks exist (rules_found=false), still populate mandatory_disqualifiers:\n"
+        f'{{"rules_found":false,"scoring_categories":[],"threshold":{{"overall_pass_mark":0,"category_minimums":[]}},'
+        f'"mandatory_disqualifiers":["<concise requirement 1>","<concise requirement 2>"]}}'
     )
 
 
