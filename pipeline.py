@@ -1135,6 +1135,33 @@ async def _run_pipeline(
     else:
         disqualification_reason = None
 
+    # Sync scored criteria with failed mandatory disqualifiers so the Requirements
+    # Assessment stays consistent with the Mandatory Requirements section.
+    # Stage 4b (binary check) is authoritative: if a disqualifier is NOT MET,
+    # any scored criterion whose name appears in that condition gets zeroed out.
+    if failed_disqs:
+        failed_conditions_lower = [d.condition.lower() for d in failed_disqs]
+        for ce in criteria_evals:
+            crit_lower = ce.criterion.lower()
+            if any(crit_lower in cond or cond in crit_lower for cond in failed_conditions_lower):
+                ce.compliance_status = "Not Met"
+                ce.marks_awarded = 0.0
+
+    # Recalculate category scores after potential mark overrides above
+    category_results = stage4_calculate_scores(criteria_evals, rules)
+
+    # Auto-disqualify if any mandatory (Critical) scored criterion is Not Met
+    if not disqualified:
+        failed_mandatory = [
+            ce for ce in criteria_evals
+            if ce.is_mandatory and ce.compliance_status == "Not Met"
+        ]
+        if failed_mandatory:
+            disqualified = True
+            disqualification_reason = (
+                f"Mandatory criterion not met: {failed_mandatory[0].criterion}"
+            )
+
     total_score = round(sum(cr.weighted_score for cr in category_results), 2)
     max_score   = round(sum(cat.weight_percent for cat in rules.scoring_categories), 2)
     threshold   = rules.threshold.overall_pass_mark
