@@ -11,8 +11,10 @@ from dotenv import load_dotenv
 from groq import AsyncGroq
 
 from models import (
+    BidReadinessResult,
     CategoryMinimum,
     CategoryResult,
+    ChecklistItem,
     CriterionEvaluation,
     DisqualifierCheck,
     EvaluationReport,
@@ -44,9 +46,12 @@ MODEL_NAME = _MODELS[0]
 # At ~1.5 tokens/char for dense docs: 3000 chars ≈ 4500 tokens → safe under 6K.
 # MAX_BID_CHARS / MAX_DISQ_CHARS kept at 4000 so each per-category call stays
 # under ~7500 tokens (input + prompt overhead), within the 12K TPM fallback model.
-MAX_RFP_CHARS  =  15_000
-MAX_BID_CHARS  =   4_000
-MAX_DISQ_CHARS =   4_000
+# MAX_BID_CHARS_GENERIC is used for categories without subcriteria — these need a
+# wider view of the bid since keyword extraction cannot target specific sections.
+MAX_RFP_CHARS         =  15_000
+MAX_BID_CHARS         =   4_000
+MAX_BID_CHARS_GENERIC =   8_000   # 2× for generic categories; stays under 14K token context
+MAX_DISQ_CHARS        =   4_000
 
 SYSTEM = (
     "You are an expert RFP (Request for Proposal) / Tender Evaluation Assistant. "
@@ -294,17 +299,20 @@ def _extract_bid_sections(bid_text: str, criteria_list: list, max_chars: int) ->
     """
     keywords: set[str] = set()
     for c in criteria_list:
-        name = c.get("criterion", "").lower()
-        keywords.update(w.strip("(),.:;-") for w in name.split() if len(w) > 3)
+        for field in [c.get("criterion", ""), c.get("category", "")]:
+            keywords.update(w.strip("(),.:;-") for w in field.lower().split() if len(w) > 3)
 
-    # General evidence keywords common in bid documents
+    # Domain-agnostic evidence keywords that appear in bids across sectors
+    # (IT, infrastructure, consulting, engineering, government contracts)
     keywords.update([
-        "experience", "project", "years", "turnover", "revenue", "annual",
-        "crore", "lakh", "team", "delivered", "completed", "implemented",
-        "developed", "certified", "empanelled", "registered", "client",
-        "customer", "reference", "case study", "production", "deployment",
-        "solution", "system", "platform", "award", "contract", "government",
-        "bfsi", "banking", "financial", "insurance", "genai", "llm", "ai",
+        "experience", "project", "years", "work", "completed", "delivered",
+        "turnover", "revenue", "annual", "crore", "lakh", "financial",
+        "team", "personnel", "staff", "manpower", "expert", "specialist",
+        "certified", "registered", "empanelled", "licence", "accredited",
+        "client", "customer", "reference", "assignment", "contract", "award",
+        "scope", "methodology", "approach", "plan", "proposed", "technical",
+        "infrastructure", "survey", "design", "report", "study", "analysis",
+        "implemented", "developed", "deployed", "executed", "managed",
     ])
 
     lines = bid_text.splitlines()
@@ -382,6 +390,87 @@ def _normalize_disqualifiers(raw) -> list:
     return result
 
 
+def _rfp_pqtq_prompt(chunk: str) -> str:
+    return (
+        f"You are reading a tender/RFP document section. Extract Pre-Qualification (PQ) eligibility "
+        f"conditions and Technical Qualification (TQ) scored criteria.\n\n"
+        f"{chunk}\n\n"
+        f"=== PART A — MANDATORY_DISQUALIFIERS (PQ eligibility, binary pass/fail) ===\n"
+        f"Extract the following from Eligibility Criteria / Pre-Qualification / Annexure sections "
+        f"as individual strings in mandatory_disqualifiers:\n"
+        f"  • Financial requirements: minimum turnover, net worth thresholds\n"
+        f"  • EMD / Bid Security: actual amount/percentage if stated\n"
+        f"  • Registration / empanelment: specific registry or body\n"
+        f"  • Experience: specific minimums\n"
+        f"  • Certifications: specific standards required\n"
+        f"  • Team / manpower minimums\n"
+        f"  • Make-in-India compliance\n\n"
+        f"CRITICAL RULES FOR PART A:\n"
+        f"  1. Each string must state the REQUIREMENT only — do NOT include any assessment, outcome, or note.\n"
+        f"  2. Only extract conditions explicitly stated in the document. Do NOT invent.\n"
+        f"  3. Keep each condition concise (under 15 words). One condition per entry.\n"
+        f"  4. If a requirement amount/threshold is not specified, OMIT that entry.\n\n"
+        f"=== PART B — SCORING_CATEGORIES (TQ criteria with explicit numeric marks) ===\n"
+        f"Extract ONLY Technical Qualification criteria that have EXPLICIT numeric marks/points/weightage.\n"
+        f"RULE 0: Set rules_found=true ONLY if you find explicit numeric marks for TQ criteria. "
+        f"Do NOT invent or guess marks.\n"
+        f"RULE 1: Each scoring category is independent — do not group under a single parent.\n"
+        f"RULE 2: subcriteria must be a FLAT list — no nesting.\n"
+        f"RULE 3: Preserve exact criterion names as they appear.\n"
+        f"RULE 4: Set qualification_type=\"TQ\" for all scored categories.\n\n"
+        f"Return ONLY JSON:\n"
+        f'{{"rules_found":true,"scoring_categories":[{{"category":"Category Name","max_marks":70,"weight_percent":70,"qualification_type":"TQ",'
+        f'"subcriteria":[{{"criterion":"Sub-Criterion Name","max_marks":20,"mandatory":false}}]}}],'
+        f'"threshold":{{"overall_pass_mark":70,"category_minimums":[]}},'
+        f'"mandatory_disqualifiers":["Minimum average annual turnover Rs. 50 crores","Minimum 3 production GenAI use cases"]}}\n\n'
+        f"If no explicit numeric TQ marks exist, still populate mandatory_disqualifiers:\n"
+        f'{{"rules_found":false,"scoring_categories":[],"threshold":{{"overall_pass_mark":0,"category_minimums":[]}},'
+        f'"mandatory_disqualifiers":["<concise requirement 1>","<concise requirement 2>"]}}'
+    )
+
+
+def _bid_readiness_prompt(text: str) -> str:
+    return (
+        f"You are a procurement expert helping a vendor understand an RFP/tender.\n\n"
+        f"Analyse the document below and extract ALL Pre-Qualification (PQ) eligibility "
+        f"conditions and Technical Qualification (TQ) scored criteria.\n\n"
+        f"DOCUMENT:\n{text}\n\n"
+        f"=== OUTPUT RULES ===\n\n"
+        f"PART A — PQ_CRITERIA (mandatory eligibility, pass/fail, NO marks attached):\n"
+        f"  • Rewrite each requirement in plain English that a business executive understands.\n"
+        f"  • Write the criterion as a short, direct statement (≤20 words).\n"
+        f"  • Write the detail as a fuller explanation with specific numbers/documents required.\n"
+        f"  • One entry per requirement — do NOT merge multiple conditions.\n"
+        f"  • Include: financial thresholds, EMD/bid security, registrations, experience minimums,\n"
+        f"    certifications, team/staff minimums, Make-in-India, blacklisting declarations.\n"
+        f"  • Do NOT include scoring thresholds (like 'must score 70%') — those are TQ rules.\n\n"
+        f"PART B — TQ_CRITERIA (scored criteria with explicit marks/points):\n"
+        f"  • Extract only criteria with explicit numeric marks/scores/weightage.\n"
+        f"  • Rewrite each in plain English showing exactly what earns the marks.\n"
+        f"  • Include the score threshold tiers if they exist.\n"
+        f"  • Group by their original category name.\n\n"
+        f"Return ONLY valid JSON — no markdown, no commentary:\n"
+        f'{{"pq_criteria":['
+        f'{{"category":"Financial","criterion":"<plain English>","detail":"<explanation>"}}],'
+        f'"tq_criteria":['
+        f'{{"category":"GenAI Experience","criterion":"<plain English>","detail":"<explanation with score tiers>","max_score":20}}]}}'
+    )
+
+
+def _base_cat_key(key: str) -> str:
+    """Return the base portion of a category key, stripping descriptive suffixes.
+
+    Handles cases where different RFP chunks extract the same category with slightly
+    different names, e.g. 'category a' vs 'category a: bidder genai delivery capability'.
+    Both reduce to 'category a' so they merge rather than produce phantom duplicates.
+    """
+    for sep in (': ', ' — ', ' - ', ' – '):
+        idx = key.find(sep)
+        if idx > 0:
+            return key[:idx].strip()
+    return key
+
+
 async def stage2_extract_rules(rfp_text: str) -> EvaluationRules:
     keyword_text = _extract_scoring_sections(rfp_text, MAX_RFP_CHARS)
     chunks = [keyword_text]
@@ -438,20 +527,30 @@ async def stage2_extract_rules(rfp_text: str) -> EvaluationRules:
                 key = key.strip().lower()
                 if not key:
                     continue
-                if key not in all_cats:
+                # Deduplicate: match exact key OR same base key so that
+                # "Category A" and "Category A: Full Description" merge into one entry.
+                base = _base_cat_key(key)
+                matched_key = key if key in all_cats else next(
+                    (k for k in all_cats if _base_cat_key(k) == base), None
+                )
+                if matched_key is None:
                     all_cats[key] = {**cat}
                 else:
-                    subs = all_cats[key].get("subcriteria", [])
+                    # Prefer the more descriptive (longer) category name
+                    existing_name = all_cats[matched_key].get("category", "")
+                    new_name = cat.get("category", "")
+                    if len(new_name) > len(existing_name):
+                        all_cats[matched_key]["category"] = new_name
+                    subs = all_cats[matched_key].get("subcriteria", [])
                     if not isinstance(subs, list):
                         subs = []
                     exist_subs = {s["criterion"].lower() for s in subs if isinstance(s, dict) and "criterion" in s}
-                    
                     cat_subs = cat.get("subcriteria", [])
                     if not isinstance(cat_subs, list):
                         cat_subs = []
                     for sub in cat_subs:
                         if isinstance(sub, dict) and sub.get("criterion", "").lower() not in exist_subs:
-                            all_cats[key].setdefault("subcriteria", []).append(sub)
+                            all_cats[matched_key].setdefault("subcriteria", []).append(sub)
 
             disqs = data.get("mandatory_disqualifiers", [])
             for d in _normalize_disqualifiers(disqs):
@@ -624,10 +723,20 @@ async def stage3_parse_vendor_response(
                 "max_marks": cat.max_marks, "mandatory": False,
             })
 
-        # Extract bid sections most relevant to THIS category's criteria
-        relevant_bid = _extract_bid_sections(bid_text, criteria_list, MAX_BID_CHARS)
-
         is_generic = not cat.subcriteria  # True when no specific subcriteria found
+
+        # For generic categories we cannot target specific sections with keywords,
+        # so use a larger window to ensure the LLM sees actual bid content.
+        # For specific-criteria categories the focused extraction is sufficient.
+        if is_generic:
+            relevant_bid = _extract_bid_sections(bid_text, criteria_list, MAX_BID_CHARS_GENERIC)
+            # Also append a mid-document slice so content not near the start is reachable.
+            mid = len(bid_text) // 2
+            mid_slice = bid_text[mid: mid + 2000]
+            if mid_slice.strip() and mid_slice not in relevant_bid:
+                relevant_bid = relevant_bid + "\n\n[...mid-document excerpt...]\n" + mid_slice
+        else:
+            relevant_bid = _extract_bid_sections(bid_text, criteria_list, MAX_BID_CHARS)
         # Detect whether this is a presentation/demo category that will be evaluated
         # during a future scheduled event. At bid stage, a detailed plan with committed
         # content and live-system evidence should be scored as 'Met', not 'Not Met'.
@@ -637,9 +746,14 @@ async def stage3_parse_vendor_response(
         today = date.today().strftime("%B %d, %Y")
 
         scoring_instruction = (
-            "This is a broad category assessment. Award 'Met' if the bid clearly addresses "
-            "this category, 'Partial' if the bid partially addresses it, 'Not Met' only if "
-            "completely absent."
+            "BROAD CATEGORY SCORING — award marks based on how well the bid addresses each aspect:\n"
+            "- 'Met' (marks_awarded = max_marks for that aspect): Bid clearly demonstrates this aspect "
+            "with specific evidence (project names, numbers, descriptions, methodology).\n"
+            "- 'Partial' (marks_awarded = max_marks * 0.5): Bid mentions or implies the aspect but "
+            "without concrete evidence or detail.\n"
+            "- 'Not Met' (marks_awarded = 0): Aspect is completely absent from the bid.\n"
+            "Default to 'Partial' if there is ANY relevant content — only use 'Not Met' when the topic "
+            "is truly not addressed at all in the document."
             if is_generic else
             "IMPORTANT CONTEXT: This is a BID DOCUMENT evaluation, not post-event scoring. "
             "For criteria that involve future scheduled events (presentations, demonstrations), "
@@ -697,14 +811,17 @@ async def stage3_parse_vendor_response(
 VENDOR BID:
 {relevant_bid}
 {rfp_context}
+IMPORTANT: This is a real vendor bid document. It may be a technical proposal, project report, company profile,
+or similar. Evaluate what is actually present in the document — do NOT assume it is empty or irrelevant.
+
 No specific subcriteria are defined in the RFP for this category.
-Identify 3 to 5 specific evaluation aspects relevant to a "{cat.category}" proposal and evaluate each one against the vendor bid.
-Distribute {cat.max_marks} marks proportionally across the aspects (sum of max_marks must equal {cat.max_marks}).
+Identify 3 to 5 specific evaluation aspects relevant to "{cat.category}" and evaluate each against the bid.
+Distribute {cat.max_marks} marks proportionally across the aspects (marks must sum to exactly {cat.max_marks}).
 
 {scoring_instruction}
 
 Return ONLY a JSON array with 3-5 items (one per aspect):
-[{{"criterion":"<specific aspect name>","category":"{cat.category}","max_marks":<proportional_max>,"marks_awarded":<actual_marks>,"vendor_claim":"<quote or Not found>","source_reference":"<section or Not found>","compliance_status":"Met|Partial|Not Met","confidence":"High|Medium|Low","justification":"<one sentence>","is_mandatory":false}}]"""
+[{{"criterion":"<specific aspect name>","category":"{cat.category}","max_marks":<proportional_max>,"marks_awarded":<actual_marks — use partial marks not just 0 or max>,"vendor_claim":"<direct quote or brief description from the bid, or 'Not found'>","source_reference":"<section heading or 'Not found'>","compliance_status":"Met|Partial|Not Met","confidence":"High|Medium|Low","justification":"<one sentence citing specific bid evidence>","is_mandatory":false}}]"""
         else:
             prompt = f"""Evaluate the vendor bid for the "{cat.category}" category.
 
@@ -1095,3 +1212,292 @@ async def run_full_evaluation(rfp_text: str, bid_text: str, prebid_text: str = "
 async def run_evaluation_with_rules(bid_text: str, rules: EvaluationRules) -> EvaluationReport:
     """Run evaluation stages 3-6 using caller-supplied rules (no RFP needed)."""
     return await _run_pipeline(bid_text, rules)
+
+
+# ---------------------------------------------------------------------------
+# PQTQ evaluation — PQ/TQ-scoped rule extraction + lenient scoring
+# ---------------------------------------------------------------------------
+
+async def stage2_extract_pqtq_rules(rfp_text: str) -> EvaluationRules:
+    """Like stage2_extract_rules but scoped to PQ/TQ criteria only."""
+    keyword_text = _extract_scoring_sections(rfp_text, MAX_RFP_CHARS)
+    chunks = [keyword_text]
+    scoring_start = _find_scoring_section_start(rfp_text)
+    if scoring_start >= 0:
+        for i in range(1, 3):
+            chunk_start = scoring_start + i * MAX_RFP_CHARS
+            if chunk_start < len(rfp_text):
+                chunks.append(rfp_text[chunk_start: chunk_start + MAX_RFP_CHARS])
+    else:
+        for start in range(0, min(len(rfp_text), MAX_RFP_CHARS * 3), MAX_RFP_CHARS):
+            chunks.append(rfp_text[start: start + MAX_RFP_CHARS])
+
+    chunks = [c for c in chunks if c.strip()][:4]
+
+    all_cats: dict[str, dict] = {}
+    all_disq: list[str] = []
+    pass_mark = 0.0
+    cat_mins: dict[str, dict] = {}
+    any_explicit_rules = False
+
+    for chunk in chunks:
+        try:
+            data = _parse_object(await _call(_rfp_pqtq_prompt(chunk)))
+            chunk_has_rules = bool(data.get("rules_found", False))
+            if chunk_has_rules:
+                any_explicit_rules = True
+            else:
+                disqs = data.get("mandatory_disqualifiers", [])
+                for d in _normalize_disqualifiers(disqs):
+                    if d not in all_disq:
+                        all_disq.append(d)
+                continue
+
+            scoring_categories = data.get("scoring_categories", [])
+            if not isinstance(scoring_categories, list):
+                scoring_categories = []
+            for cat in scoring_categories:
+                if not isinstance(cat, dict):
+                    continue
+                key = cat.get("category", "")
+                if not isinstance(key, str):
+                    key = str(key)
+                key = key.strip().lower()
+                if not key:
+                    continue
+                base = _base_cat_key(key)
+                matched_key = key if key in all_cats else next(
+                    (k for k in all_cats if _base_cat_key(k) == base), None
+                )
+                if matched_key is None:
+                    all_cats[key] = {**cat}
+                else:
+                    existing_name = all_cats[matched_key].get("category", "")
+                    new_name = cat.get("category", "")
+                    if len(new_name) > len(existing_name):
+                        all_cats[matched_key]["category"] = new_name
+                    subs = all_cats[matched_key].get("subcriteria", [])
+                    if not isinstance(subs, list):
+                        subs = []
+                    exist_subs = {s["criterion"].lower() for s in subs if isinstance(s, dict) and "criterion" in s}
+                    cat_subs = cat.get("subcriteria", [])
+                    if not isinstance(cat_subs, list):
+                        cat_subs = []
+                    for sub in cat_subs:
+                        if isinstance(sub, dict) and sub.get("criterion", "").lower() not in exist_subs:
+                            all_cats[matched_key].setdefault("subcriteria", []).append(sub)
+
+            disqs = data.get("mandatory_disqualifiers", [])
+            for d in _normalize_disqualifiers(disqs):
+                if d not in all_disq:
+                    all_disq.append(d)
+
+            thresh = data.get("threshold", {})
+            if not isinstance(thresh, dict):
+                thresh = {}
+            pm = float(thresh.get("overall_pass_mark", 0) or 0)
+            if pm > pass_mark:
+                pass_mark = pm
+
+            for cm in (thresh.get("category_minimums") or []):
+                if isinstance(cm, dict) and "category" in cm:
+                    cat_mins[cm.get("category", "").lower()] = cm
+        except Exception as e:
+            print(f"[Stage2-PQTQ chunk] error: {e}")
+            continue
+
+    raw_cats = []
+    for cat in all_cats.values():
+        mm = float(cat.get("max_marks") or 0)
+        wp = float(cat.get("weight_percent") or 0)
+        subs = cat.get("subcriteria", [])
+        if not isinstance(subs, list):
+            subs = []
+        if mm == 0 and subs:
+            mm = sum(float(s.get("max_marks") or 0) for s in subs if isinstance(s, dict))
+        if wp == 0:
+            wp = mm
+        if mm > 0:
+            raw_cats.append((cat, mm, wp))
+
+    total_w = sum(w for _, _, w in raw_cats)
+    if total_w > 0:
+        raw_cats = [(c, m, round(w / total_w * 100, 2)) for c, m, w in raw_cats]
+
+    categories = []
+    for c, m, w in raw_cats:
+        subs = c.get("subcriteria", [])
+        if not isinstance(subs, list):
+            subs = []
+        subcriteria_list = []
+        for s in subs:
+            if not s:
+                continue
+            if isinstance(s, dict):
+                subcriteria_list.append(SubCriterion(
+                    criterion=s.get("criterion", "Criterion"),
+                    max_marks=float(s.get("max_marks") or 0),
+                    mandatory=bool(s.get("mandatory", False)),
+                ))
+            else:
+                subcriteria_list.append(SubCriterion(criterion=str(s), max_marks=0))
+        categories.append(ScoringCategory(
+            category=c.get("category", "Category"),
+            max_marks=m,
+            weight_percent=w,
+            subcriteria=subcriteria_list,
+            qualification_type=str(c.get("qualification_type", "") or ""),
+        ))
+
+    # Filter out parent criteria when sub-criteria are present
+    for cat in categories:
+        sub_numbers = {
+            m.group(1)
+            for s in cat.subcriteria
+            for m in [re.match(r'(?:Sub-Criterion|Sub-criterion|Sub\s+Criterion)\s+(\d+)\b', s.criterion, re.IGNORECASE)]
+            if m
+        }
+        cat.subcriteria = [
+            s for s in cat.subcriteria
+            if not (re.match(r'^Criterion\s+(\d+)\b', s.criterion, re.IGNORECASE) and
+                    re.match(r'^Criterion\s+(\d+)\b', s.criterion, re.IGNORECASE).group(1) in sub_numbers)
+        ]
+
+    threshold = Threshold(
+        overall_pass_mark=pass_mark,
+        category_minimums=[
+            CategoryMinimum(category=cm.get("category", ""), minimum_percent=float(cm.get("minimum_percent") or 0))
+            for cm in cat_mins.values()
+            if isinstance(cm, dict)
+        ],
+    )
+
+    return EvaluationRules(
+        rules_found=any_explicit_rules and len(all_cats) > 0,
+        scoring_categories=categories,
+        threshold=threshold,
+        mandatory_disqualifiers=all_disq,
+    )
+
+
+_PQ_KEYWORDS = ["pre-qualif", "pre qualif", "prequalif", "eligib", "pq —", "pq-", " pq ", "(pq)", "annexure 2", "annex 2"]
+_TQ_KEYWORDS = ["technical qual", "technical eval", "tq —", "tq-", " tq ", "(tq)", "annexure 18", "annex 18", "technical criteria"]
+
+
+async def run_pqtq_evaluation(rfp_text: str, bid_text: str) -> EvaluationReport:
+    """Evaluate bid scoped to Pre-Qualification / Technical Qualification criteria only."""
+    if not _rfp_has_explicit_marks(rfp_text):
+        raise ValueError("NO_RULES_FOUND")
+    rules = await stage2_extract_pqtq_rules(rfp_text)
+    if not rules.rules_found:
+        raise ValueError("NO_RULES_FOUND")
+
+    for cat in rules.scoring_categories:
+        if not cat.qualification_type:
+            name = cat.category.lower()
+            if any(k in name for k in _TQ_KEYWORDS):
+                cat.qualification_type = "TQ"
+            elif any(k in name for k in _PQ_KEYWORDS):
+                cat.qualification_type = "PQ"
+            else:
+                cat.qualification_type = "TQ"
+
+    rfp_scoring_text = _extract_scoring_sections(rfp_text, MAX_RFP_CHARS)
+    return await _run_pipeline(bid_text, rules, rfp_scoring_text)
+
+
+# ---------------------------------------------------------------------------
+# Bid Readiness — extract PQ/TQ checklist in plain English (no bid needed)
+# ---------------------------------------------------------------------------
+
+async def extract_bid_readiness_checklist(
+    rfp_text: str, additional_text: str = ""
+) -> BidReadinessResult:
+    """Extract PQ/TQ criteria from RFP as a plain-English self-assessment checklist."""
+    combined = rfp_text
+    if additional_text.strip():
+        combined = rfp_text + "\n\n=== ADDITIONAL DOCUMENT ===\n\n" + additional_text
+
+    keyword_text  = _extract_scoring_sections(combined, MAX_RFP_CHARS)
+    scoring_start = _find_scoring_section_start(combined)
+
+    chunks: list[str] = [keyword_text]
+    if scoring_start >= 0:
+        for i in range(1, 4):
+            chunk_start = scoring_start + i * MAX_RFP_CHARS
+            if chunk_start < len(combined):
+                chunks.append(combined[chunk_start: chunk_start + MAX_RFP_CHARS])
+    else:
+        for start in range(0, min(len(combined), MAX_RFP_CHARS * 4), MAX_RFP_CHARS):
+            chunks.append(combined[start: start + MAX_RFP_CHARS])
+
+    chunks = [c for c in chunks if c.strip()][:5]
+
+    seen_pq: set[str] = set()
+    seen_tq: set[str] = set()
+    raw_pq: list[dict] = []
+    raw_tq: list[dict] = []
+
+    for chunk in chunks:
+        try:
+            data = _parse_object(await _call(_bid_readiness_prompt(chunk)))
+        except Exception:
+            continue
+
+        for item in (data.get("pq_criteria") or []):
+            if not isinstance(item, dict):
+                continue
+            key = str(item.get("criterion", "")).strip().lower()[:80]
+            if key and key not in seen_pq:
+                seen_pq.add(key)
+                raw_pq.append(item)
+
+        for item in (data.get("tq_criteria") or []):
+            if not isinstance(item, dict):
+                continue
+            key = str(item.get("criterion", "")).strip().lower()[:80]
+            if key and key not in seen_tq:
+                seen_tq.add(key)
+                raw_tq.append(item)
+
+    pq_items: List[ChecklistItem] = []
+    for i, item in enumerate(raw_pq):
+        criterion = str(item.get("criterion", "")).strip()
+        if not criterion:
+            continue
+        pq_items.append(ChecklistItem(
+            id=f"pq_{i}",
+            type="PQ",
+            category=str(item.get("category", "Eligibility")).strip(),
+            criterion=criterion,
+            detail=str(item.get("detail", "")).strip(),
+            max_score=0.0,
+            is_mandatory=True,
+        ))
+
+    tq_items: List[ChecklistItem] = []
+    total_tq = 0.0
+    for i, item in enumerate(raw_tq):
+        criterion = str(item.get("criterion", "")).strip()
+        if not criterion:
+            continue
+        try:
+            score = float(item.get("max_score", 0) or 0)
+        except (TypeError, ValueError):
+            score = 0.0
+        total_tq += score
+        tq_items.append(ChecklistItem(
+            id=f"tq_{i}",
+            type="TQ",
+            category=str(item.get("category", "Technical")).strip(),
+            criterion=criterion,
+            detail=str(item.get("detail", "")).strip(),
+            max_score=score,
+            is_mandatory=False,
+        ))
+
+    return BidReadinessResult(
+        pq_items=pq_items,
+        tq_items=tq_items,
+        total_tq_score=round(total_tq, 2),
+    )

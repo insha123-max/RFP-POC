@@ -13,6 +13,7 @@ class ScoringCategory(BaseModel):
     max_marks: float
     weight_percent: float
     subcriteria: List[SubCriterion] = []
+    qualification_type: str = ""  # "PQ", "TQ", or "" for standard evaluations
 
 
 class CategoryMinimum(BaseModel):
@@ -44,6 +45,7 @@ class CriterionEvaluation(BaseModel):
     justification: str
     is_mandatory: bool = False
     threshold_logic: str = ""  # "RFP Min (X%)" or "50% Fallback"
+    qualification_type: str = ""  # "PQ", "TQ", or "" for standard evaluations
 
 
 class CategoryResult(BaseModel):
@@ -56,6 +58,7 @@ class CategoryResult(BaseModel):
     passed: bool
     minimum_required: Optional[float] = None
     criteria: List[CriterionEvaluation] = []
+    qualification_type: str = ""  # "PQ", "TQ", or "" for standard evaluations
 
 
 class DisqualifierCheck(BaseModel):
@@ -89,6 +92,22 @@ class EvaluationReport(BaseModel):
     rules: EvaluationRules
     prebid_qa: List[PrebidQA] = []
     prebid_applied: bool = False
+
+
+class ChecklistItem(BaseModel):
+    id: str
+    type: str           # "PQ" or "TQ"
+    category: str
+    criterion: str      # plain-English requirement
+    detail: str         # fuller explanation
+    max_score: float = 0.0   # 0 for PQ items
+    is_mandatory: bool = False
+
+
+class BidReadinessResult(BaseModel):
+    pq_items: List[ChecklistItem]
+    tq_items: List[ChecklistItem]
+    total_tq_score: float
 
 
 class OverrideEntry(BaseModel):

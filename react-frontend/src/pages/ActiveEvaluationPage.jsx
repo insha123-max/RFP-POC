@@ -50,8 +50,25 @@ function weightBadge(w) {
   return <span className={`badge ${map[w] || 'badge-weight-medium'}`} style={{ fontSize: '0.7rem' }}>{w}</span>
 }
 
+function qualBadge(qt) {
+  if (!qt) return null
+  const isPQ = qt === 'PQ'
+  return (
+    <span style={{
+      display: 'inline-block', fontSize: '0.6rem', fontWeight: 800,
+      padding: '1px 6px', borderRadius: 4, marginLeft: 5,
+      background: isPQ ? '#FEF3C7' : '#EDE9FE',
+      color: isPQ ? '#92400E' : '#5B21B6',
+      border: `1px solid ${isPQ ? '#FDE68A' : '#DDD6FE'}`,
+      letterSpacing: '0.04em', verticalAlign: 'middle',
+    }}>
+      {qt}
+    </span>
+  )
+}
+
 /* ── Vendor Card ────────────────────────────────────────────────────────── */
-function VendorCard({ vendor }) {
+function VendorCard({ vendor, pqChecks = [], isPQTQ = false }) {
   return (
     <div style={{
       background: '#fff', borderRadius: 12, padding: '1.5rem',
@@ -80,34 +97,107 @@ function VendorCard({ vendor }) {
         <div style={{ fontSize: '0.78rem', color: '#6B7280', marginTop: 4 }}>Overall Score</div>
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        {vendor.categories.map(cat => (
-          <div key={cat.name}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-              <span style={{ fontSize: '0.8rem', color: '#374151' }}>{cat.name}</span>
-              <span style={{ fontSize: '0.72rem', fontWeight: 700, padding: '1px 8px', borderRadius: 4, background: '#EEF2FF', color: '#4F46E5' }}>
-                {cat.score}/100
-              </span>
+      {/* PQ eligibility summary — only shown in PQTQ mode */}
+      {isPQTQ && pqChecks.length > 0 && (() => {
+        const passed = pqChecks.filter(c => c.met).length
+        const total  = pqChecks.length
+        const pct    = Math.round((passed / total) * 100)
+        const allPass = passed === total
+        const barColor = allPass ? '#16A34A' : passed === 0 ? '#DC2626' : '#F59E0B'
+        const labelColor = allPass ? '#15803D' : passed === 0 ? '#DC2626' : '#B45309'
+        return (
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ fontSize: '0.68rem', fontWeight: 700, color: '#92400E', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+              {qualBadge('PQ')} Pre-Qualification
             </div>
-            <div style={{ height: 6, background: '#E5E7EB', borderRadius: 999, overflow: 'hidden' }}>
-              <div style={{ height: '100%', borderRadius: 999, background: cat.color, width: `${cat.score}%`, transition: 'width .8s' }} />
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                <span style={{ fontSize: '0.8rem', color: '#374151' }}>Eligibility Criteria</span>
+                <span style={{ fontSize: '0.72rem', fontWeight: 700, padding: '1px 8px', borderRadius: 4, background: allPass ? '#DCFCE7' : '#FEF3C7', color: labelColor }}>
+                  {passed}/{total} Met
+                </span>
+              </div>
+              <div style={{ height: 6, background: '#E5E7EB', borderRadius: 999, overflow: 'hidden' }}>
+                <div style={{ height: '100%', borderRadius: 999, background: barColor, width: `${pct}%`, transition: 'width .8s' }} />
+              </div>
+              <div style={{ fontSize: '0.68rem', color: '#9CA3AF', marginTop: 4 }}>
+                {allPass ? 'All eligibility criteria met' : `${total - passed} not met — see Requirements Assessment`}
+              </div>
             </div>
           </div>
-        ))}
-      </div>
+        )
+      })()}
+
+      {/* Scoring categories */}
+      {vendor.categories.length > 0 && (
+        <div>
+          {isPQTQ && pqChecks.length > 0 && (
+            <div style={{ fontSize: '0.68rem', fontWeight: 700, color: '#5B21B6', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
+              {qualBadge('TQ')} Technical Qualification
+            </div>
+          )}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {vendor.categories.map(cat => (
+              <div key={cat.name}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                  <span style={{ fontSize: '0.8rem', color: '#374151' }}>{cat.name}</span>
+                  <span style={{ fontSize: '0.72rem', fontWeight: 700, padding: '1px 8px', borderRadius: 4, background: '#EEF2FF', color: '#4F46E5' }}>
+                    {cat.score}/100
+                  </span>
+                </div>
+                <div style={{ height: 6, background: '#E5E7EB', borderRadius: 999, overflow: 'hidden' }}>
+                  <div style={{ height: '100%', borderRadius: 999, background: cat.color, width: `${cat.score}%`, transition: 'width .8s' }} />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
 
 /* ── Requirements Table ─────────────────────────────────────────────────── */
-function RequirementsTable({ criteria }) {
+function RequirementsTable({ criteria, pqChecks = [], title = 'Requirements Assessment', qualType = '' }) {
   const [filter, setFilter] = useState('all')
-  const filtered = filter === 'all' ? criteria : criteria.filter(c => c.v1 === filter)
+
+  const pqRows = pqChecks.map(chk => ({
+    name: chk.condition,
+    category: 'Pre-Qualification',
+    weight: 'Critical',
+    v1: chk.met ? 'Met' : 'Not Met',
+    threshold_logic: 'PQ Pass/Fail',
+    justification: chk.note || '',
+    qualification_type: 'PQ',
+    isPQ: true,
+    met: chk.met,
+  }))
+
+  const allRows = [...pqRows, ...criteria]
+  const filtered = filter === 'all' ? allRows : allRows.filter(c => c.v1 === filter)
+  const metCount    = allRows.filter(r => r.v1 === 'Met').length
+  const notMetCount = allRows.filter(r => r.v1 === 'Not Met').length
 
   return (
     <div className="card" style={{ padding: 0, overflow: 'hidden', marginBottom: '1.5rem' }}>
       <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid #E5E7EB', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={{ fontWeight: 700, fontSize: '1rem' }}>Requirements Assessment</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {qualType && qualBadge(qualType)}
+          <span style={{ fontWeight: 700, fontSize: '1rem' }}>{title}</span>
+          <span style={{ fontSize: '0.7rem', color: '#6B7280', background: '#F1F5F9', borderRadius: 999, padding: '2px 8px', fontWeight: 600 }}>
+            {allRows.length} criteria
+          </span>
+          {qualType && (
+            <span style={{ display: 'flex', gap: 5 }}>
+              <span style={{ fontSize: '0.7rem', fontWeight: 700, background: '#DCFCE7', color: '#15803D', borderRadius: 999, padding: '2px 8px' }}>
+                ✓ {metCount} Met
+              </span>
+              <span style={{ fontSize: '0.7rem', fontWeight: 700, background: '#FEE2E2', color: '#DC2626', borderRadius: 999, padding: '2px 8px' }}>
+                ✗ {notMetCount} Not Met
+              </span>
+            </span>
+          )}
+        </div>
         <div style={{ display: 'flex', gap: 6 }}>
           {['all', 'Met', 'Not Met'].map(f => (
             <button key={f} onClick={() => setFilter(f)} style={{
@@ -135,9 +225,11 @@ function RequirementsTable({ criteria }) {
           </thead>
           <tbody>
             {filtered.map((c, i) => (
-              <tr key={i}>
+              <tr key={i} style={{ background: c.isPQ ? (c.met ? '#FEFCE8' : '#FFF7F7') : undefined }}>
                 <td>
-                  <div style={{ fontWeight: 600, fontSize: '0.875rem', color: '#111827' }}>{c.name}</div>
+                  <div style={{ fontWeight: 600, fontSize: '0.875rem', color: '#111827' }}>
+                    {c.name}{qualBadge(c.qualification_type)}
+                  </div>
                   {c.justification && (
                     <div style={{ fontSize: '0.7rem', color: '#9CA3AF', marginTop: 2 }}>{c.justification.slice(0, 80)}{c.justification.length > 80 ? '…' : ''}</div>
                   )}
@@ -146,7 +238,9 @@ function RequirementsTable({ criteria }) {
                 <td>{weightBadge(c.weight)}</td>
                 <td>{statusBadge(c.v1)}</td>
                 <td>{logicBadge(c.threshold_logic)}</td>
-                <td style={{ fontWeight: 700, color: '#4F46E5', fontSize: '0.85rem' }}>{c.marks_awarded}/{c.max_marks}</td>
+                <td style={{ fontWeight: 700, fontSize: '0.85rem', color: c.isPQ ? (c.met ? '#15803D' : '#DC2626') : '#4F46E5' }}>
+                  {c.isPQ ? (c.met ? 'Pass' : 'Fail') : `${c.marks_awarded}/${c.max_marks}`}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -180,6 +274,7 @@ function RiskItem({ vendor, desc, type, severity }) {
     </div>
   )
 }
+
 
 /* ── Root Cause Panel ───────────────────────────────────────────────────── */
 function RootCausePanel({ report }) {
@@ -232,35 +327,77 @@ export default function ActiveEvaluationPage() {
   const score      = Math.round((report.total_score / report.max_score) * 100)
   const vendorName = stripExt(bidName)
 
+  // Separate PQ (pass/fail eligibility) from TQ (scored technical) category results
+  const pqCats = report.category_results.filter(cr => cr.qualification_type === 'PQ')
+  const tqCats = report.category_results.filter(cr => cr.qualification_type !== 'PQ')
+
+  // PQ checks shown as pass/fail in the vendor card — derived from PQ category results,
+  // falling back to mandatory disqualifier_checks for non-PQTQ evaluations
+  const pqChecks = pqCats.length > 0
+    ? pqCats.map(cr => ({
+        condition: cr.category,
+        met: cr.passed,
+        note: `${Math.round(cr.marks_awarded)}/${cr.max_marks} marks`,
+      }))
+    : (report.disqualifier_checks || [])
+
   const vendor = {
     name: vendorName,
     score,
     riskLevel: report.disqualified ? 'High Risk' : report.passed ? 'Low Risk' : 'Medium Risk',
     riskClass: report.disqualified ? 'badge-high' : report.passed ? 'badge-low' : 'badge-medium',
-    categories: report.category_results.map((cr, i) => ({
+    categories: tqCats.map((cr, i) => ({
       name: cr.category,
       score: Math.round(cr.percent_achieved),
       color: COLORS[i % COLORS.length],
+      qualification_type: cr.qualification_type || '',
     })),
   }
 
   const allRawCriteria = report.category_results.flatMap(cr => cr.criteria)
-  const criteria = allRawCriteria.map(c => {
-    const cr = report.category_results.find(r => r.criteria.includes(c))
-    return {
-      name: c.criterion,
-      category: cr?.category ?? '',
-      weight: deriveWeight(c, allRawCriteria),
-      v1: c.compliance_status,
-      justification: c.justification,
-      vendor_claim: c.vendor_claim,
-      source_reference: c.source_reference,
-      confidence: c.confidence,
-      marks_awarded: c.marks_awarded,
-      max_marks: c.max_marks,
-      threshold_logic: c.threshold_logic || '50% Fallback',
-    }
-  })
+  const pqtqCriteria = allRawCriteria.filter(c => c.qualification_type === 'PQ' || c.qualification_type === 'TQ')
+  const isPQTQ = pqtqCriteria.length > 0
+
+  // PQ criteria shown as pass/fail pqRows in the table — exclude from scored rows to avoid duplication
+  const criteria = allRawCriteria
+    .filter(c => c.qualification_type !== 'PQ')
+    .map(c => {
+      const cr = report.category_results.find(r => r.criteria.includes(c))
+      return {
+        name: c.criterion,
+        category: cr?.category ?? '',
+        weight: deriveWeight(c, allRawCriteria),
+        v1: c.compliance_status,
+        justification: c.justification,
+        vendor_claim: c.vendor_claim,
+        source_reference: c.source_reference,
+        confidence: c.confidence,
+        marks_awarded: c.marks_awarded,
+        max_marks: c.max_marks,
+        threshold_logic: c.threshold_logic || '50% Fallback',
+        qualification_type: c.qualification_type || '',
+      }
+    })
+
+  const tqTableRows = isPQTQ
+    ? allRawCriteria.filter(c => c.qualification_type === 'TQ').map(c => {
+        const cr = report.category_results.find(r => r.criteria.includes(c))
+        return {
+          name: c.criterion,
+          category: cr?.category ?? '',
+          weight: deriveWeight(c, allRawCriteria),
+          v1: c.compliance_status,
+          justification: c.justification,
+          vendor_claim: c.vendor_claim,
+          source_reference: c.source_reference,
+          confidence: c.confidence,
+          marks_awarded: c.marks_awarded,
+          max_marks: c.max_marks,
+          threshold_logic: c.threshold_logic || 'PQ Pass/Fail',
+          qualification_type: 'TQ',
+        }
+      })
+    : []
 
   const risks = report.risk_items.map(r => ({
     vendor: vendorName,
@@ -430,7 +567,7 @@ export default function ActiveEvaluationPage() {
       {/* Vendor Card */}
       <div style={{ marginBottom: '1.75rem' }}>
         <h2 style={{ fontWeight: 700, fontSize: '1.05rem', color: '#111827', marginBottom: '1.25rem' }}>Vendor Evaluation</h2>
-        <VendorCard vendor={vendor} />
+        <VendorCard vendor={vendor} pqChecks={pqChecks} isPQTQ={isPQTQ} />
       </div>
 
       {/* Pass Criteria Breakdown */}
@@ -535,8 +672,32 @@ export default function ActiveEvaluationPage() {
         </div>
       </div>
 
-      {/* Requirements Assessment */}
-      <RequirementsTable criteria={criteria} />
+      {/* Requirements Assessment — split PQ/TQ for PQTQ mode, flat for General */}
+      {isPQTQ ? (
+        <>
+          {pqChecks.length > 0 && (
+            <RequirementsTable
+              criteria={[]}
+              pqChecks={pqChecks}
+              title="Pre-Qualification Requirements"
+              qualType="PQ"
+            />
+          )}
+          {tqTableRows.length > 0 && (
+            <RequirementsTable
+              criteria={tqTableRows}
+              title="Technical Qualification Criteria"
+              qualType="TQ"
+            />
+          )}
+        </>
+      ) : (
+        <RequirementsTable
+          criteria={criteria}
+          pqChecks={[]}
+          title="Requirements Assessment"
+        />
+      )}
 
       {/* Pre-Bid Q&A Clarifications */}
       {report.prebid_qa?.length > 0 && (

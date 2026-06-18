@@ -13,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from document import extract_text
 from export import generate_word_report
 from models import (
+    BidReadinessResult,
     CategoryMinimum,
     EvaluationReport,
     EvaluationRules,
@@ -21,7 +22,12 @@ from models import (
     SubCriterion,
     Threshold,
 )
-from pipeline import run_evaluation_with_rules, run_full_evaluation
+from pipeline import (
+    extract_bid_readiness_checklist,
+    run_evaluation_with_rules,
+    run_full_evaluation,
+    run_pqtq_evaluation,
+)
 
 load_dotenv()
 
@@ -178,6 +184,96 @@ async def evaluate_custom(
         return report
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Evaluation failed: {exc}")
+
+
+@app.post("/api/evaluate-pqtq", response_model=EvaluationReport)
+async def evaluate_pqtq(
+    rfp_file: UploadFile = File(..., description="RFP / Tender document"),
+    bid_files: List[UploadFile] = File(..., description="Vendor bid / response documents"),
+    extra_rfp_files: List[UploadFile] = File(default=[], description="Additional rule/scoring documents (annexures, scoring matrices)"),
+):
+    rfp_bytes = await rfp_file.read()
+    rfp_text, rfp_err = extract_text(rfp_file.filename or "rfp.pdf", rfp_bytes)
+    if rfp_err:
+        raise HTTPException(status_code=400, detail=f"RFP document error: {rfp_err}")
+
+    # Concatenate additional rule documents with the RFP text so Stage 2
+    # can extract criteria from annexures / scoring matrices uploaded separately.
+    for i, ef in enumerate(extra_rfp_files):
+        ef_bytes = await ef.read()
+        ef_text, ef_err = extract_text(ef.filename or f"extra_rfp_{i+1}.pdf", ef_bytes)
+        if not ef_err and ef_text.strip():
+            rfp_text += f"\n\n=== ADDITIONAL DOCUMENT: {ef.filename} ===\n{ef_text}"
+
+    bid_parts = []
+    for i, bid_file in enumerate(bid_files):
+        bid_bytes = await bid_file.read()
+        bid_text, bid_err = extract_text(bid_file.filename or f"bid_{i+1}.pdf", bid_bytes)
+        if bid_err:
+            raise HTTPException(status_code=400, detail=f"Bid document '{bid_file.filename}' error: {bid_err}")
+        header = f"=== BID DOCUMENT {i+1}: {bid_file.filename} ===" if len(bid_files) > 1 else ""
+        bid_parts.append(f"{header}\n{bid_text}".strip())
+    combined_bid_text = "\n\n".join(bid_parts)
+
+    try:
+        report = await run_pqtq_evaluation(rfp_text, combined_bid_text)
+        return report
+    except ValueError as exc:
+        if str(exc) == "NO_RULES_FOUND":
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "NO_RULES_FOUND: No Pre-Qualification or Technical Qualification scoring "
+                    "criteria with explicit numeric marks were found in this RFP."
+                ),
+            )
+        raise HTTPException(status_code=500, detail=str(exc))
+    except RuntimeError as exc:
+        msg = str(exc)
+        if "rate-limited" in msg or "All Groq" in msg:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "The AI service is temporarily unavailable due to rate limits. "
+                    "Please wait 1–2 minutes and try again."
+                ),
+            )
+        raise HTTPException(status_code=500, detail=f"Evaluation failed: {exc}")
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Evaluation failed: {exc}")
+
+
+@app.post("/api/bid-readiness", response_model=BidReadinessResult)
+async def bid_readiness(
+    rfp_file: UploadFile = File(..., description="RFP / Tender document"),
+    additional_file: Optional[UploadFile] = File(default=None, description="Optional additional document (annexures, scoring matrix, etc.)"),
+):
+    """Extract PQ/TQ criteria from RFP as a plain-English self-assessment checklist."""
+    rfp_bytes = await rfp_file.read()
+    rfp_text, rfp_err = extract_text(rfp_file.filename or "rfp.pdf", rfp_bytes)
+    if rfp_err:
+        raise HTTPException(status_code=400, detail=f"RFP document error: {rfp_err}")
+
+    additional_text = ""
+    if additional_file and additional_file.filename:
+        add_bytes = await additional_file.read()
+        add_text, add_err = extract_text(additional_file.filename, add_bytes)
+        if not add_err:
+            additional_text = add_text
+
+    try:
+        result = await extract_bid_readiness_checklist(rfp_text, additional_text)
+        return result
+    except RuntimeError as exc:
+        msg = str(exc)
+        if "rate-limited" in msg or "All Groq" in msg:
+            raise HTTPException(
+                status_code=503,
+                detail="The AI service is temporarily unavailable. Please wait 1–2 minutes and try again.",
+            )
+        raise HTTPException(status_code=500, detail=f"Extraction failed: {exc}")
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Extraction failed: {exc}")
 
 
 @app.post("/api/override", response_model=EvaluationReport)

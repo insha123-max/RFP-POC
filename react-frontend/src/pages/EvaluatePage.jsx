@@ -597,6 +597,7 @@ export default function EvaluatePage() {
       timestamp: new Date().toISOString(),
       score: Math.round((report.total_score / report.max_score) * 100),
       passed: report.passed,
+      evaluationType: 'General',
     })
     setTimeout(() => navigate('/active-evaluation'), 500)
   }
@@ -813,7 +814,7 @@ export default function EvaluatePage() {
         </div>
       )}
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 380px', gap: '1.5rem', alignItems: 'start' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr minmax(300px, 28%)', gap: '1.5rem', alignItems: 'start' }}>
         {/* Left column — upload + run */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
           <div className="card" style={{ padding: '2rem' }}>
