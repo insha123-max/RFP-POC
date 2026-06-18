@@ -240,7 +240,7 @@ export default function DashboardPage() {
           </div>
 
           {/* Main Grid */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: '1.5rem', marginBottom: '1.5rem' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr minmax(280px, 26%)', gap: '1.5rem', marginBottom: '1.5rem' }}>
             {/* Left: Recent Evaluations */}
             <div className="card" style={{ padding: '1.5rem' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem' }}>

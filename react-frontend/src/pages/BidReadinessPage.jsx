@@ -267,139 +267,165 @@ export default function BidReadinessPage() {
   /* ── Upload phase ─────────────────────────────────────────────────────── */
   if (!result) {
     return (
-      <div style={{ minHeight: '100%', background: 'linear-gradient(160deg,#F0F4FF 0%,#F9FAFB 45%,#FFF8F0 100%)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '2.5rem 1rem' }}>
+      <div style={{ minHeight: 'calc(100vh - 56px)', background: '#F4F5F9', display: 'flex', flexDirection: 'column', padding: '1.5rem' }}>
         <style>{`@keyframes spin{to{transform:rotate(360deg)}} @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}`}</style>
-        <div style={{ width: '100%', maxWidth: 660 }}>
 
-          {/* ── Hero ── */}
-          <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
-            <div style={{ display: 'inline-flex', width: 68, height: 68, borderRadius: 20, background: 'linear-gradient(135deg,#4F46E5,#7C3AED)', alignItems: 'center', justifyContent: 'center', marginBottom: 18, boxShadow: '0 10px 28px rgba(79,70,229,.3)' }}>
-              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
-              </svg>
-            </div>
-            <div style={{ fontSize: '2rem', fontWeight: 900, color: '#111827', marginBottom: 10, letterSpacing: '-0.02em' }}>PQTQ Checker</div>
-            <div style={{ fontSize: '0.875rem', color: '#6B7280', lineHeight: 1.75, maxWidth: 460, margin: '0 auto 1.5rem' }}>
-              Upload your RFP and we'll extract every PQ eligibility requirement and TQ scoring criterion in plain English — then let you assess what your company can fulfil.
+        {/* Page title row */}
+        <div style={{ marginBottom: '1.25rem' }}>
+          <div style={{ fontSize: '1rem', fontWeight: 700, color: '#1E2140' }}>PQTQ Checker</div>
+          <div style={{ fontSize: '0.74rem', color: '#8892A8', marginTop: 2 }}>Upload an RFP to extract PQ &amp; TQ criteria and assess your bid readiness</div>
+        </div>
+
+        {/* Two-column grid — stretch to fill remaining height */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.25rem', flex: 1 }}>
+
+          {/* ── LEFT — info card ── */}
+          <div style={{ background: '#fff', borderRadius: 10, border: '1px solid #E2E5EF', padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+
+            {/* Icon + heading */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <div style={{ width: 40, height: 40, borderRadius: 10, background: '#ECEFFE', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#5C6BC0" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
+                </svg>
+              </div>
+              <div>
+                <div style={{ fontSize: '0.9rem', fontWeight: 700, color: '#1E2140' }}>How it works</div>
+                <div style={{ fontSize: '0.72rem', color: '#8892A8', marginTop: 1 }}>Three steps to assess your bid readiness</div>
+              </div>
             </div>
 
-            {/* Feature pills */}
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
+            {/* Steps */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
               {[
-                { label: 'PQ Eligibility', sub: 'Mandatory requirements', bg: '#FEF3C7', color: '#92400E', dot: '#F59E0B' },
-                { label: 'TQ Scoring',     sub: 'Technical criteria',     bg: '#EEF2FF', color: '#3730A3', dot: '#4F46E5' },
-                { label: 'Readiness Score', sub: 'Go / No-Go decision',   bg: '#ECFDF5', color: '#065F46', dot: '#10B981' },
-              ].map(c => (
-                <div key={c.label} style={{ display: 'flex', alignItems: 'center', gap: 6, background: c.bg, borderRadius: 999, padding: '5px 14px', border: `1px solid ${c.dot}33` }}>
-                  <span style={{ width: 7, height: 7, borderRadius: '50%', background: c.dot, flexShrink: 0 }} />
-                  <span style={{ fontSize: '0.75rem', fontWeight: 700, color: c.color }}>{c.label}</span>
-                  <span style={{ fontSize: '0.68rem', color: '#9CA3AF' }}>· {c.sub}</span>
+                { step: '01', title: 'Upload RFP', desc: 'Attach your RFP or tender document. An optional additional file (corrigendum, annexure) can also be added.', color: '#5C6BC0', bg: '#ECEFFE' },
+                { step: '02', title: 'AI Extracts Criteria', desc: 'The AI reads through the document and pulls out every PQ eligibility condition and TQ scoring criterion in plain English.', color: '#2E9E6E', bg: '#EDFAF4' },
+                { step: '03', title: 'Self-Assess & Score', desc: 'Check each criterion your company can fulfil. Calculate your readiness score and get a Go / No-Go recommendation.', color: '#B87D1A', bg: '#FDF5E0' },
+              ].map((s, i) => (
+                <div key={i} style={{ display: 'flex', gap: 14, padding: '1rem 0', borderBottom: i < 2 ? '1px solid #F0F1F6' : 'none' }}>
+                  <div style={{ width: 36, height: 36, borderRadius: 9, background: s.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    <span style={{ fontSize: '0.65rem', fontWeight: 800, color: s.color }}>{s.step}</span>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#1E2140', marginBottom: 3 }}>{s.title}</div>
+                    <div style={{ fontSize: '0.72rem', color: '#8892A8', lineHeight: 1.55 }}>{s.desc}</div>
+                  </div>
                 </div>
               ))}
             </div>
-          </div>
 
-          {/* ── Upload card ── */}
-          <div style={{ background: '#fff', borderRadius: 18, border: '1px solid #E5E7EB', overflow: 'hidden', boxShadow: '0 4px 28px rgba(0,0,0,.08)' }}>
-
-            {/* Card header bar */}
-            <div style={{ padding: '0.9rem 1.5rem', borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', gap: 8, background: '#FAFAFA' }}>
-              <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#4F46E5' }} />
-              <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#374151' }}>Upload Documents</span>
-              <span style={{ marginLeft: 'auto', fontSize: '0.7rem', color: '#9CA3AF' }}>PDF · DOC · DOCX · PPTX</span>
+            {/* What gets extracted */}
+            <div style={{ background: '#F8F8FB', borderRadius: 8, border: '1px solid #E2E5EF', padding: '0.9rem 1rem' }}>
+              <div style={{ fontSize: '0.7rem', fontWeight: 700, color: '#8892A8', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 10 }}>What gets extracted</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+                {[
+                  { label: 'PQ Criteria', desc: 'Turnover, experience, certifications, EMD, registration', color: '#92400E', bg: '#FEF3C7' },
+                  { label: 'TQ Criteria', desc: 'Technical score items grouped by evaluation category', color: '#3730A3', bg: '#E0E7FF' },
+                ].map(item => (
+                  <div key={item.label} style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+                    <span style={{ fontSize: '0.65rem', fontWeight: 700, padding: '2px 7px', borderRadius: 4, background: item.bg, color: item.color, flexShrink: 0 }}>{item.label}</span>
+                    <span style={{ fontSize: '0.72rem', color: '#8892A8' }}>{item.desc}</span>
+                  </div>
+                ))}
+              </div>
             </div>
 
-            <div style={{ padding: '1.5rem' }}>
+            <div style={{ marginTop: 'auto', fontSize: '0.68rem', color: '#C8CEDC', display: 'flex', gap: 16 }}>
+              <span>⏱ ~15–30 sec</span>
+              <span>🔒 No data stored</span>
+            </div>
+          </div>
 
-              {/* Step 1 — RFP */}
-              <div style={{ marginBottom: 14 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                  <span style={{ width: 22, height: 22, borderRadius: '50%', background: 'linear-gradient(135deg,#4F46E5,#7C3AED)', color: '#fff', fontSize: '0.68rem', fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, boxShadow: '0 2px 6px rgba(79,70,229,.35)' }}>1</span>
-                  <span style={{ fontSize: '0.82rem', fontWeight: 700, color: '#111827' }}>RFP / Tender Document</span>
-                  <span style={{ marginLeft: 'auto', fontSize: '0.62rem', fontWeight: 700, background: '#FEE2E2', color: '#DC2626', padding: '2px 7px', borderRadius: 5 }}>REQUIRED</span>
-                </div>
-                <FileZone label="Drop your RFP here or click to browse" hint="The main tender / RFP document" file={rfpFile} onFile={setRfpFile} required={false} />
+          {/* ── RIGHT — upload form card ── */}
+          <div style={{ background: '#fff', borderRadius: 10, border: '1px solid #E2E5EF', padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+
+            <div>
+              <div style={{ fontSize: '0.9rem', fontWeight: 700, color: '#1E2140', marginBottom: 3 }}>Upload Documents</div>
+              <div style={{ fontSize: '0.72rem', color: '#8892A8' }}>PDF, DOC, DOCX, PPTX supported</div>
+            </div>
+
+            {/* Step 1 */}
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                <span style={{ width: 20, height: 20, borderRadius: '50%', background: '#ECEFFE', color: '#5C6BC0', fontSize: '0.62rem', fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>1</span>
+                <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#1E2140' }}>RFP / Tender Document</span>
+                <span style={{ marginLeft: 'auto', fontSize: '0.6rem', fontWeight: 700, background: '#FDEAEA', color: '#C94545', padding: '2px 6px', borderRadius: 4, letterSpacing: '0.04em' }}>REQUIRED</span>
               </div>
+              <FileZone label="Drop your RFP here or click to browse" hint="The main tender / RFP document" file={rfpFile} onFile={setRfpFile} required={false} />
+            </div>
 
-              {/* Divider */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '10px 0 14px' }}>
-                <div style={{ flex: 1, height: 1, background: '#F3F4F6' }} />
-                <span style={{ fontSize: '0.64rem', color: '#D1D5DB', fontWeight: 600, letterSpacing: '0.06em' }}>OPTIONAL</span>
-                <div style={{ flex: 1, height: 1, background: '#F3F4F6' }} />
+            {/* Divider */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <div style={{ flex: 1, height: 1, background: '#E2E5EF' }} />
+              <span style={{ fontSize: '0.6rem', color: '#C8CEDC', fontWeight: 600, letterSpacing: '0.08em' }}>OPTIONAL</span>
+              <div style={{ flex: 1, height: 1, background: '#E2E5EF' }} />
+            </div>
+
+            {/* Step 2 */}
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                <span style={{ width: 20, height: 20, borderRadius: '50%', background: '#F4F5F9', color: '#8892A8', fontSize: '0.62rem', fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>2</span>
+                <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#374151' }}>Additional Document</span>
+                <span style={{ fontSize: '0.68rem', color: '#B0B8CC', marginLeft: 4 }}>Annexures, corrigendum, scoring matrix</span>
               </div>
-
-              {/* Step 2 — Additional */}
-              <div style={{ marginBottom: 20 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                  <span style={{ width: 22, height: 22, borderRadius: '50%', background: '#F3F4F6', color: '#6B7280', fontSize: '0.68rem', fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>2</span>
-                  <span style={{ fontSize: '0.82rem', fontWeight: 700, color: '#374151' }}>Additional Document</span>
-                  <span style={{ fontSize: '0.7rem', color: '#9CA3AF', marginLeft: 4 }}>Annexures, corrigendum, scoring matrix</span>
-                </div>
-                <div style={{ position: 'relative' }}>
-                  <FileZone label="Drop additional file here or click to browse" hint="Annexures, corrigendum, scoring tables" file={addFile} onFile={setAddFile} required={false} />
-                  {addFile && (
-                    <button onClick={e => { e.stopPropagation(); setAddFile(null) }} style={{
-                      position: 'absolute', top: 8, right: 10, background: '#FEE2E2', border: 'none',
-                      borderRadius: '50%', width: 20, height: 20, cursor: 'pointer', display: 'flex',
-                      alignItems: 'center', justifyContent: 'center', fontSize: '0.6rem', color: '#DC2626', fontWeight: 700,
-                    }}>✕</button>
-                  )}
-                </div>
-              </div>
-
-              {error && (
-                <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 9, padding: '9px 13px', marginBottom: 14, fontSize: '0.8rem', color: '#DC2626', display: 'flex', alignItems: 'center', gap: 7 }}>
-                  <span style={{ flexShrink: 0, fontSize: '0.95rem' }}>⚠</span>{error}
-                </div>
-              )}
-
-              {/* CTA Button */}
-              <button onClick={handleAnalyze} disabled={loading || !rfpFile} style={{
-                width: '100%', padding: '0.9rem', borderRadius: 11, border: 'none',
-                background: rfpFile ? 'linear-gradient(135deg,#4F46E5,#7C3AED)' : '#E5E7EB',
-                color: rfpFile ? '#fff' : '#9CA3AF', fontWeight: 700, fontSize: '0.95rem',
-                cursor: rfpFile ? 'pointer' : 'not-allowed', transition: 'all .15s',
-                boxShadow: rfpFile ? '0 4px 18px rgba(79,70,229,.32)' : 'none',
-                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-              }}>
-                {loading ? (
-                  <><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" style={{ animation: 'spin 1s linear infinite' }}><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>Analysing RFP…</>
-                ) : (
-                  <><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>Analyse &amp; Generate Checklist</>
+              <div style={{ position: 'relative' }}>
+                <FileZone label="Drop additional file here or click to browse" hint="Annexures, corrigendum, scoring tables" file={addFile} onFile={setAddFile} required={false} />
+                {addFile && (
+                  <button onClick={e => { e.stopPropagation(); setAddFile(null) }} style={{
+                    position: 'absolute', top: 8, right: 10, background: '#FDEAEA', border: 'none',
+                    borderRadius: '50%', width: 18, height: 18, cursor: 'pointer', display: 'flex',
+                    alignItems: 'center', justifyContent: 'center', fontSize: '0.55rem', color: '#C94545', fontWeight: 700,
+                  }}>✕</button>
                 )}
-              </button>
-
-              {/* Loading progress */}
-              {loading && (
-                <div style={{ marginTop: 14, background: '#F8F7FF', borderRadius: 12, padding: '12px 16px', border: '1px solid #E0E7FF' }}>
-                  {[
-                    'Parsing RFP document…',
-                    'Extracting PQ eligibility requirements…',
-                    'Extracting TQ scoring criteria…',
-                    'Building your checklist…',
-                  ].map((label, i) => (
-                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: i < 3 ? 7 : 0 }}>
-                      <div style={{
-                        width: 14, height: 14, borderRadius: '50%', flexShrink: 0,
-                        background: i === 0 ? '#22C55E' : i === 1 ? '#4F46E5' : '#E5E7EB',
-                        border: i === 1 ? '2px solid #4F46E5' : 'none',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        animation: i === 1 ? 'pulse 1.2s ease-in-out infinite' : 'none',
-                      }}>
-                        {i === 0 && <span style={{ fontSize: '0.5rem', color: '#fff', fontWeight: 900 }}>✓</span>}
-                      </div>
-                      <span style={{ fontSize: '0.74rem', fontWeight: i === 1 ? 600 : 400, color: i === 0 ? '#9CA3AF' : i === 1 ? '#4F46E5' : '#C4C9D4' }}>{label}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
+              </div>
             </div>
+
+            {error && (
+              <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, padding: '8px 12px', fontSize: '0.76rem', color: '#C94545', display: 'flex', alignItems: 'center', gap: 7 }}>
+                <span style={{ flexShrink: 0 }}>⚠</span>{error}
+              </div>
+            )}
+
+            {/* CTA */}
+            <button onClick={handleAnalyze} disabled={loading || !rfpFile} style={{
+              width: '100%', padding: '0.78rem', borderRadius: 9, border: 'none',
+              background: rfpFile ? '#5C6BC0' : '#E2E5EF',
+              color: rfpFile ? '#fff' : '#B0B8CC', fontWeight: 700, fontSize: '0.84rem',
+              cursor: rfpFile ? 'pointer' : 'not-allowed', transition: 'all .18s',
+              boxShadow: rfpFile ? '0 4px 14px rgba(92,107,192,.28)' : 'none',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+              fontFamily: 'inherit',
+            }}>
+              {loading ? (
+                <><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" style={{ animation: 'spin 1s linear infinite' }}><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>Analysing RFP…</>
+              ) : (
+                <><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>Analyse &amp; Generate Checklist</>
+              )}
+            </button>
+
+            {/* Loading steps */}
+            {loading && (
+              <div style={{ background: '#F8F8FB', borderRadius: 8, padding: '10px 12px', border: '1px solid #E2E5EF' }}>
+                {['Parsing RFP document…', 'Extracting PQ eligibility requirements…', 'Extracting TQ scoring criteria…', 'Building your checklist…'].map((lbl, i) => (
+                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: i < 3 ? 7 : 0 }}>
+                    <div style={{
+                      width: 12, height: 12, borderRadius: '50%', flexShrink: 0,
+                      background: i === 0 ? '#2E9E6E' : i === 1 ? '#5C6BC0' : '#E2E5EF',
+                      border: i === 1 ? '2px solid #5C6BC0' : 'none',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      animation: i === 1 ? 'pulse 1.2s ease-in-out infinite' : 'none',
+                    }}>
+                      {i === 0 && <span style={{ fontSize: '0.4rem', color: '#fff', fontWeight: 900 }}>✓</span>}
+                    </div>
+                    <span style={{ fontSize: '0.71rem', fontWeight: i === 1 ? 600 : 400, color: i === 0 ? '#B0B8CC' : i === 1 ? '#5C6BC0' : '#C8CEDC' }}>{lbl}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div style={{ marginTop: 'auto' }} />
           </div>
 
-          {/* Footer note */}
-          <div style={{ textAlign: 'center', marginTop: '1.1rem', fontSize: '0.71rem', color: '#9CA3AF' }}>
-            Usually takes 15–30 seconds &nbsp;·&nbsp; No data is stored
-          </div>
         </div>
       </div>
     )
