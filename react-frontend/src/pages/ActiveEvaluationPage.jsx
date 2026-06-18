@@ -9,16 +9,6 @@ function stripExt(name) {
   return name ? name.replace(/\.[^.]+$/, '') : 'Evaluated Vendor'
 }
 
-function deriveWeight(c, allCriteria) {
-  if (c.is_mandatory) return 'Critical'
-  const marks = (allCriteria || []).map(x => x.max_marks ?? 0)
-  const maxMark = Math.max(...marks, 0)
-  const uniqueMarks = new Set(marks)
-  // Only elevate to Critical when marks vary AND this criterion has notably high marks
-  if (uniqueMarks.size > 1 && maxMark > 0 && c.max_marks >= maxMark * 0.75) return 'Critical'
-  return 'Standard'
-}
-
 /* ── Badges ─────────────────────────────────────────────────────────────── */
 function statusBadge(s) {
   if (s === 'Met') return <span className="badge badge-met"    style={{ fontSize: '0.7rem' }}>✓ Met</span>
@@ -45,10 +35,6 @@ function logicBadge(logic) {
   )
 }
 
-function weightBadge(w) {
-  const map = { Critical: 'badge-weight-critical', Standard: 'badge-weight-medium', Low: 'badge-weight-medium' }
-  return <span className={`badge ${map[w] || 'badge-weight-medium'}`} style={{ fontSize: '0.7rem' }}>{w}</span>
-}
 
 function qualBadge(qt) {
   if (!qt) return null
@@ -215,9 +201,8 @@ function RequirementsTable({ criteria, pqChecks = [], title = 'Requirements Asse
         <table className="tbl">
           <thead>
             <tr>
-              <th style={{ width: '38%' }}>Requirement</th>
+              <th style={{ width: '42%' }}>Requirement</th>
               <th>Category</th>
-              <th>Weight</th>
               <th>Status</th>
               <th>Logic</th>
               <th>Score</th>
@@ -235,7 +220,6 @@ function RequirementsTable({ criteria, pqChecks = [], title = 'Requirements Asse
                   )}
                 </td>
                 <td style={{ fontSize: '0.78rem', color: '#6B7280' }}>{c.category}</td>
-                <td>{weightBadge(c.weight)}</td>
                 <td>{statusBadge(c.v1)}</td>
                 <td>{logicBadge(c.threshold_logic)}</td>
                 <td style={{ fontWeight: 700, fontSize: '0.85rem', color: c.isPQ ? (c.met ? '#15803D' : '#DC2626') : '#4F46E5' }}>
@@ -366,7 +350,7 @@ export default function ActiveEvaluationPage() {
       return {
         name: c.criterion,
         category: cr?.category ?? '',
-        weight: deriveWeight(c, allRawCriteria),
+
         v1: c.compliance_status,
         justification: c.justification,
         vendor_claim: c.vendor_claim,
@@ -385,7 +369,7 @@ export default function ActiveEvaluationPage() {
         return {
           name: c.criterion,
           category: cr?.category ?? '',
-          weight: deriveWeight(c, allRawCriteria),
+  
           v1: c.compliance_status,
           justification: c.justification,
           vendor_claim: c.vendor_claim,
