@@ -92,7 +92,7 @@ async def _call(prompt: str, system: str = SYSTEM) -> str:
                     {"role": "user",   "content": prompt},
                 ],
                 temperature=0.1,
-                max_tokens=400,
+                max_tokens=2048,
             )
             return resp.choices[0].message.content
         except Exception as exc:
