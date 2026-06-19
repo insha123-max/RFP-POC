@@ -1,6 +1,5 @@
-"""7-stage RFP evaluation pipeline powered by Groq (llama-3.3-70b-versatile)."""
+"""7-stage RFP evaluation pipeline powered by Ollama (gemma4:26b primary)."""
 
-import asyncio
 import json
 import os
 import re
@@ -8,7 +7,7 @@ from datetime import date
 from typing import List, Optional
 
 from dotenv import load_dotenv
-from groq import AsyncGroq
+from openai import AsyncOpenAI
 
 from models import (
     BidReadinessResult,
@@ -27,30 +26,32 @@ from models import (
 
 load_dotenv()
 
-# Model fallback list — tried in order when rate-limited or decommissioned.
-# Only include models confirmed active on Groq (decommissioned models removed June 2026):
-#   llama-3.1-70b-versatile   — DECOMMISSIONED (400)
-#   gemma2-9b-it              — DECOMMISSIONED (400)
-#   llama-3.2-3b-preview      — DECOMMISSIONED (400)
+# ---------------------------------------------------------------------------
+# Ollama configuration
+# ---------------------------------------------------------------------------
+
+OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL")
+if not OLLAMA_BASE_URL:
+    raise RuntimeError("OLLAMA_BASE_URL environment variable is not set. Add it to your .env file.")
+
+# Model preference order — best accuracy first.
+# gemma4:26b is the largest local model and gives the best reasoning quality.
+# minimax-m2.7:cloud is cloud-backed and is a strong secondary.
+# llama3:latest / llama3:8b are the same model (same digest) — used as fallback.
 _MODELS = [
-    "llama-3.3-70b-versatile",                        # best reasoning — use first
-    "meta-llama/llama-4-scout-17b-16e-instruct",      # newer Llama 4, larger quota
-    "meta-llama/llama-4-maverick-17b-128e-instruct",  # secondary Llama 4
-    "qwen-qwq-32b",                                   # additional fallback
-    "llama-3.1-8b-instant",                           # last resort — high quota, smaller
+    "gemma4:26b",              # primary — largest, best reasoning
+    "minimax-m2.7:cloud",      # secondary — cloud-backed, good quality
+    "llama3:latest",           # fallback — solid 8B general model
+    "llama3:8b",               # identical to llama3:latest, keeps slot if name differs
 ]
 MODEL_NAME = _MODELS[0]
 
-# Chunk sizes calibrated for llama-3.1-8b-instant's 6K TPM limit.
-# At ~1.5 tokens/char for dense docs: 3000 chars ≈ 4500 tokens → safe under 6K.
-# MAX_BID_CHARS / MAX_DISQ_CHARS kept at 4000 so each per-category call stays
-# under ~7500 tokens (input + prompt overhead), within the 12K TPM fallback model.
-# MAX_BID_CHARS_GENERIC is used for categories without subcriteria — these need a
-# wider view of the bid since keyword extraction cannot target specific sections.
+# Chunk sizes — Ollama models run locally so no TPM quota pressure.
+# gemma4:26b supports 128K context; keep chunks sane for latency reasons.
 MAX_RFP_CHARS         =  15_000
-MAX_BID_CHARS         =   4_000
-MAX_BID_CHARS_GENERIC =   8_000   # 2× for generic categories; stays under 14K token context
-MAX_DISQ_CHARS        =   4_000
+MAX_BID_CHARS         =   6_000   # larger than Groq (no quota limit)
+MAX_BID_CHARS_GENERIC =  10_000   # wide window for generic categories
+MAX_DISQ_CHARS        =   6_000
 
 SYSTEM = (
     "You are an expert RFP (Request for Proposal) / Tender Evaluation Assistant. "
@@ -61,67 +62,63 @@ SYSTEM = (
     "If something is not found in the document, state 'Not found in document' and score it 0."
 )
 
-_client: Optional[AsyncGroq] = None
+_client: Optional[AsyncOpenAI] = None
 
 
-def get_client() -> AsyncGroq:
+def get_client() -> AsyncOpenAI:
     global _client
     if _client is None:
-        _client = AsyncGroq(api_key=os.environ["GROQ_API_KEY"])
+        _client = AsyncOpenAI(
+            base_url=f"{OLLAMA_BASE_URL}/v1",
+            api_key="ollama",          # Ollama ignores the key; must be non-empty
+        )
     return _client
 
 
 async def _call(prompt: str, system: str = SYSTEM) -> str:
-    """Try each model in _MODELS; fall back to next on rate-limit or decommission errors.
+    """Try each model in _MODELS; fall back to next on error.
 
-    Rate-limited models get one retry with exponential backoff before moving on.
-    Decommissioned models are skipped immediately (no retry — they will never recover).
+    Ollama is self-hosted so there is no rate-limit quota, but individual
+    models can be unavailable (not pulled) or may time out on heavy load.
     """
     last_exc: Exception = RuntimeError("No models available")
     for model in _MODELS:
-        for attempt in range(2):  # up to 2 attempts per model (for rate limits)
-            try:
-                resp = await get_client().chat.completions.create(
-                    model=model,
-                    messages=[
-                        {"role": "system", "content": system},
-                        {"role": "user",   "content": prompt},
-                    ],
-                    temperature=0.1,
-                    max_tokens=2048,
-                )
-                return resp.choices[0].message.content
-            except Exception as exc:
-                err = str(exc)
-                is_rate_limit     = "429" in err or "rate" in err.lower() or "quota" in err.lower()
-                is_decommissioned = "decommission" in err.lower() or "deprecated" in err.lower() or "no longer supported" in err.lower()
+        try:
+            resp = await get_client().chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user",   "content": prompt},
+                ],
+                temperature=0.1,
+                max_tokens=2048,
+            )
+            return resp.choices[0].message.content
+        except Exception as exc:
+            err = str(exc)
+            is_not_found = (
+                "model" in err.lower() and ("not found" in err.lower() or "pull" in err.lower())
+            ) or "404" in err
+            is_timeout = "timeout" in err.lower() or "timed out" in err.lower()
 
-                if is_decommissioned:
-                    print(f"[_call] {model} decommissioned, skipping. Error: {err[:160]}")
-                    last_exc = exc
-                    break  # no retry — move to next model immediately
+            if is_not_found:
+                print(f"[_call] {model} not available on Ollama, skipping. Error: {err[:160]}")
+                last_exc = exc
+                continue  # try next model immediately
 
-                if is_rate_limit:
-                    last_exc = exc
-                    if attempt == 0:
-                        wait = 2 ** (attempt + 1)  # 2s first retry
-                        print(f"[_call] {model} rate-limited, retrying in {wait}s. Error: {err[:160]}")
-                        await asyncio.sleep(wait)
-                        # loop continues for attempt=1
-                    else:
-                        # Second attempt also failed — move to next model
-                        print(f"[_call] {model} rate-limited again, trying next model.")
-                        break
+            if is_timeout:
+                print(f"[_call] {model} timed out, trying next model. Error: {err[:160]}")
+                last_exc = exc
+                continue
 
-                else:
-                    raise  # auth, network, or unexpected errors — bubble up immediately
+            # Connection error or unexpected — still try next model but log it
+            print(f"[_call] {model} error: {err[:200]}")
+            last_exc = exc
+            continue
 
-    # All models exhausted
     raise RuntimeError(
-        "All Groq models are currently rate-limited. "
-        "Please wait a few minutes and try again, or check https://console.groq.com "
-        "to see your remaining daily quota. "
-        f"Last error: {last_exc}"
+        f"All Ollama models failed. Ensure the Ollama server at {OLLAMA_BASE_URL} is reachable "
+        f"and at least one of {_MODELS} is pulled. Last error: {last_exc}"
     )
 
 
