@@ -202,15 +202,26 @@ _SCORING_KEYWORDS = [
 # High-confidence regex anchors that indicate we are inside an RFP scoring section.
 # Used to skip past irrelevant header/boilerplate in large documents.
 _SCORING_ANCHORS = [
+    # Generic scoring table headers (Indian govt tenders)
+    r"max\.?\s*marks",
+    r"evaluation\s+basis",
+    r"evaluation\s+criteria.*sub.?criteria",
+    r"s\.?\s*no\.?\s+evaluation\s+criteria",
+    r"marks\s+allocated\s+to\s+categor",
+    r"maximum\s+marks.*criterion.*shall\s+be\s+\d+",
+    # Common Indian govt tender scoring criteria names
+    r"average\s+annual\s+turn\s*over",
+    r"firm.s\s+relevant\s+experience",
+    r"employee\s+certif",
+    r"technical\s+presentation",
+    r"technical\s+approach.*methodology",
+    # GenAI/PNB specific (kept for backwards compat)
     r"minimum\s+qualifying\s+marks\s*:?\s*bidder\s+must\s+score",
     r"scoring\s+summary",
-    r"70%\s+in\s+each\s+category\s+separately",
     r"category\s+[ab]\s*:.*(?:marks|capability|experience)",
     r"sub.criterion\s+1\.a",
     r"genai\s+delivery\s+capability",
     r"\d+\s+or\s+more\s+production\s+gen.?ai",
-    r"maximum\s+marks.*criterion.*shall\s+be\s+\d+",
-    r"marks\s+allocated\s+to\s+categor",
 ]
 
 
@@ -348,30 +359,39 @@ def _extract_bid_sections(bid_text: str, criteria_list: list, max_chars: int) ->
 
 def _rfp_extract_prompt(chunk: str) -> str:
     return (
-        f"You are reading a tender/RFP document section. Your task is to extract the SCORING MATRIX only.\n\n"
+        f"You are reading a tender/RFP document section. Extract ONLY the SCORING MATRIX — the table "
+        f"that assigns numeric Max. Marks to evaluation criteria. Copy criterion names and marks EXACTLY "
+        f"as written. Do NOT rename, paraphrase, merge, split, or invent anything.\n\n"
         f"{chunk}\n\n"
-        f"STRICT RULES — read carefully before responding:\n\n"
-        f"RULE 0 — THE MOST IMPORTANT RULE:\n"
-        f"  Set rules_found=false and return EMPTY scoring_categories if the document does NOT explicitly "
-        f"state numeric marks, points, scores, or weightage against each criterion. "
-        f"A document that merely lists requirements, questions, or section headings WITHOUT attaching "
-        f"numeric marks to them is NOT a scoring rubric. Do NOT invent, guess, or assume any marks.\n"
-        f"  Examples that should return rules_found=false:\n"
-        f"    - 'Please provide your company overview and team details' (no marks stated)\n"
-        f"    - 'Section 3: Technical Approach — describe your methodology' (no marks stated)\n"
-        f"  Examples that should return rules_found=true:\n"
-        f"    - 'Technical Experience: max 20 marks'\n"
-        f"    - 'Criterion 1.a: GenAI Use Cases — 10 points'\n\n"
-        f"RULE 1: Do NOT group categories under a single parent. Each scoring category is independent.\n"
-        f"RULE 2: subcriteria must be a FLAT list — no nesting.\n"
-        f"RULE 3: Preserve exact criterion names and prefixes as they appear in the document.\n"
-        f"RULE 4: If a 'PRE-BID CLARIFICATIONS' section is present, treat it as authoritative — any criterion, "
-        f"threshold, or requirement stated there overrides the corresponding original RFP value.\n\n"
+        f"=== RULE A — IGNORE ELIGIBILITY / PRE-QUALIFICATION SECTIONS ===\n"
+        f"Sections titled 'Eligibility Criteria', 'Pre-Qualification', 'PQ Criteria', 'Mandatory Requirements'\n"
+        f"list pass/fail conditions WITHOUT marks. DO NOT extract these at all.\n"
+        f"Example of what to IGNORE: 'Minimum turnover Rs 4.5 crore', 'At least 1 similar work of Rs 2 crore'\n\n"
+        f"=== RULE B — EXTRACT FROM THE SCORING TABLE ONLY ===\n"
+        f"Indian govt RFPs have a scoring table with columns: S.No | Evaluation Criteria | Sub-Criteria | Max. Marks | Evaluation Basis\n"
+        f"Each ROW of this table becomes one scoring_category. Use the exact text from 'Evaluation Criteria' column as the category name.\n"
+        f"Use the value in the 'Max. Marks' column as max_marks. Do not modify these values.\n\n"
+        f"=== RULE C — TIERED SCORING (MOST IMPORTANT) ===\n"
+        f"When a criterion has tiered/progressive marks (e.g. '1-3 projects=10 marks, 3-5 projects=20 marks, ≥5 projects=30 marks'),\n"
+        f"this is ONE scoring_category. Create EXACTLY ONE subcriterion that describes ALL tiers in its 'criterion' text.\n"
+        f"Set max_marks = the MAXIMUM tier value (highest possible marks for this criterion).\n"
+        f"The tiers are MUTUALLY EXCLUSIVE — a vendor can only fall into one tier.\n"
+        f"Example for 'Firm's Relevant Experience' (max 30):\n"
+        f'  subcriteria: [{{"criterion":"≥1 and <3 similar projects = 10 marks; ≥3 and <5 = 20 marks; ≥5 = 30 marks","max_marks":30}}]\n'
+        f"Example for 'Employee Certifications' (1 employee=4 marks, max 20):\n"
+        f'  subcriteria: [{{"criterion":"1 certified employee = 4 marks; each additional = 4 marks; maximum 20 marks (5 employees)","max_marks":20}}]\n'
+        f"Example for 'Average Annual Turnover' (Rs 4.5 crore=5 marks, +0.25 per crore above, max 10):\n"
+        f'  subcriteria: [{{"criterion":"Rs 4.5 crore = 5 marks; above Rs 4.5 crore: +0.25 marks per Rs 1 crore; maximum 10 marks","max_marks":10}}]\n\n'
+        f"=== RULE D — DO NOT INVENT ===\n"
+        f"Set rules_found=false if this text has no scoring table with explicit Max. Marks column.\n"
+        f"Never guess, assume, or invent marks. Never use eligibility thresholds as marks.\n\n"
+        f"=== RULE E — PRESERVE EXACT NAMES ===\n"
+        f"Copy criterion and category names verbatim from the RFP. Do not rephrase or shorten.\n\n"
         f"Return ONLY JSON:\n"
-        f'{{"rules_found":true,"scoring_categories":[{{"category":"Category Name","max_marks":70,"weight_percent":70,'
-        f'"subcriteria":[{{"criterion":"Sub-Criterion Name","max_marks":20}}]}}],'
+        f'{{"rules_found":true,"scoring_categories":[{{"category":"<exact name from RFP>","max_marks":30,"weight_percent":30,'
+        f'"subcriteria":[{{"criterion":"<ALL tier descriptions in ONE string: tier1=X marks; tier2=Y marks; tier3=Z marks","max_marks":30}}]}}],'
         f'"threshold":{{"overall_pass_mark":70,"category_minimums":[]}}}}\n\n'
-        f"If no explicit numeric marks exist anywhere in this text: "
+        f"If no explicit scoring table with Max. Marks exists in this text: "
         f'return exactly {{"rules_found":false,"scoring_categories":[],"threshold":{{"overall_pass_mark":0,"category_minimums":[]}}}}'
     )
 
