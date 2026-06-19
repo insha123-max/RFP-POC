@@ -18,6 +18,7 @@ from models import (
     CriterionEvaluation,
     EvaluationReport,
     EvaluationRules,
+    PQCheck,
     PrebidQA,
     RiskItem,
     ScoringCategory,
@@ -361,14 +362,17 @@ def _rfp_extract_prompt(chunk: str) -> str:
         f"that assigns numeric Max. Marks to evaluation criteria. Copy criterion names and marks EXACTLY "
         f"as written. Do NOT rename, paraphrase, merge, split, or invent anything.\n\n"
         f"{chunk}\n\n"
-        f"=== RULE A — IGNORE ELIGIBILITY / PRE-QUALIFICATION SECTIONS ===\n"
-        f"Sections titled 'Eligibility Criteria', 'Pre-Qualification', 'PQ Criteria', 'Mandatory Requirements'\n"
-        f"list pass/fail conditions WITHOUT marks. DO NOT extract these at all.\n"
-        f"Example of what to IGNORE: 'Minimum turnover Rs 4.5 crore', 'At least 1 similar work of Rs 2 crore'\n\n"
-        f"=== RULE B — EXTRACT FROM THE SCORING TABLE ONLY ===\n"
-        f"Indian govt RFPs have a scoring table with columns: S.No | Evaluation Criteria | Sub-Criteria | Max. Marks | Evaluation Basis\n"
-        f"Each ROW of this table becomes one scoring_category. Use the exact text from 'Evaluation Criteria' column as the category name.\n"
-        f"Use the value in the 'Max. Marks' column as max_marks. Do not modify these values.\n\n"
+        f"YOUR TASK: Find the scoring table and extract EVERY row from it.\n\n"
+        f"STEP 1 — FIND THE SCORING TABLE:\n"
+        f"The scoring table has a column called 'Max. Marks' (or 'Maximum Marks') with explicit numbers.\n"
+        f"It typically has columns: S.No | Evaluation Criteria | Sub-Criteria | Max. Marks | Evaluation Basis\n\n"
+        f"STEP 2 — EXTRACT EVERY ROW WITHOUT EXCEPTION:\n"
+        f"Once you identify the scoring table, extract ALL rows that have a number in the Max. Marks column.\n"
+        f"DO NOT skip any row based on its content. Do not apply eligibility filtering to scoring table rows.\n"
+        f"If a row is inside the scoring table and has a Max. Marks number — extract it. No exceptions.\n\n"
+        f"STEP 3 — SKIP TABLES WITHOUT A MAX. MARKS COLUMN:\n"
+        f"Ignore tables with columns like 'Parameter | Pre-qualification Criterion | Document Required'.\n"
+        f"These eligibility/PQ tables have no numeric marks and must NOT be extracted.\n\n"
         f"=== RULE C — TIERED SCORING (MOST IMPORTANT) ===\n"
         f"When a criterion has tiered/progressive marks (e.g. '1-3 projects=10 marks, 3-5 projects=20 marks, ≥5 projects=30 marks'),\n"
         f"this is ONE scoring_category. Create EXACTLY ONE subcriterion that describes ALL tiers in its 'criterion' text.\n"
@@ -393,6 +397,34 @@ def _rfp_extract_prompt(chunk: str) -> str:
         f'return exactly {{"rules_found":false,"scoring_categories":[],"threshold":{{"overall_pass_mark":0,"category_minimums":[]}}}}'
     )
 
+
+
+def _rfp_pq_extract_prompt(text: str) -> str:
+    return (
+        f"You are reading a tender/RFP document. Extract ONLY the Pre-Qualification (PQ) / Eligibility criteria.\n\n"
+        f"{text}\n\n"
+        f"These are pass/fail requirements a bidder must meet to be eligible (NOT scored criteria with marks).\n"
+        f"Look for sections titled 'Eligibility Criteria', 'Pre-Qualification', 'PQ Criteria' etc.\n"
+        f"Extract each requirement as a short criterion name and a brief detail describing what is required.\n"
+        f"Do NOT extract scored criteria that have explicit marks/points — only eligibility conditions.\n\n"
+        f"Return ONLY JSON array:\n"
+        f'[{{"criterion":"<short name>","detail":"<what the bidder must demonstrate or provide>"}}]\n'
+        f"If no PQ/eligibility criteria are found, return: []"
+    )
+
+
+def _pq_evaluate_prompt(bid_text: str, pq_criteria: list) -> str:
+    criteria_json = json.dumps(pq_criteria, indent=2)
+    return (
+        f"You are evaluating a vendor bid against Pre-Qualification (PQ) eligibility requirements.\n\n"
+        f"BID DOCUMENT:\n{bid_text}\n\n"
+        f"PQ REQUIREMENTS:\n{criteria_json}\n\n"
+        f"For each requirement, check whether the bid provides evidence of compliance.\n"
+        f"- 'Met': Bid clearly demonstrates or mentions the requirement.\n"
+        f"- 'Not Met': Bid is silent or explicitly cannot meet the requirement.\n\n"
+        f"Return ONLY a JSON array with one entry per requirement:\n"
+        f'[{{"criterion":"<name>","detail":"<detail>","status":"Met|Not Met","vendor_claim":"<direct quote or Not found>","justification":"<one sentence>"}}]'
+    )
 
 
 def _rfp_pqtq_prompt(chunk: str) -> str:
@@ -1041,11 +1073,47 @@ async def stage_extract_prebid_qa(prebid_text: str) -> list:
 # Orchestrator — shared stages 3-6
 # ---------------------------------------------------------------------------
 
+async def stage_extract_pq_criteria(rfp_text: str) -> list:
+    """Extract PQ/eligibility criteria from RFP as a plain list of dicts."""
+    chunk = rfp_text[:MAX_RFP_CHARS]
+    try:
+        raw = await _call(_rfp_pq_extract_prompt(chunk))
+        items = _parse_array(raw)
+        return [i for i in items if isinstance(i, dict) and i.get("criterion")]
+    except Exception:
+        return []
+
+
+async def stage_evaluate_pq_criteria(bid_text: str, pq_criteria: list) -> list:
+    """Evaluate each PQ criterion against the bid and return PQCheck objects."""
+    if not pq_criteria:
+        return []
+    chunk = bid_text[:MAX_BID_CHARS]
+    try:
+        raw = await _call(_pq_evaluate_prompt(chunk, pq_criteria))
+        items = _parse_array(raw)
+        checks = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            checks.append(PQCheck(
+                criterion=item.get("criterion", ""),
+                detail=item.get("detail", ""),
+                status=item.get("status", "Not Met"),
+                vendor_claim=item.get("vendor_claim", "Not found"),
+                justification=item.get("justification", ""),
+            ))
+        return checks
+    except Exception:
+        return []
+
+
 async def _run_pipeline(
     bid_text: str,
     rules: EvaluationRules,
     rfp_scoring_text: str = "",
     prebid_text: str = "",
+    pq_criteria: list = [],
 ) -> EvaluationReport:
     criteria_evals   = await stage3_parse_vendor_response(bid_text, rules, rfp_scoring_text)
     category_results = stage4_calculate_scores(criteria_evals, rules)
@@ -1062,17 +1130,17 @@ async def _run_pipeline(
     )
     passed = not disqualified and not category_fail and total_score >= threshold
 
-    # If the score is 100% (overall score meets or exceeds max_score, or all criteria scored 100%), no gaps/risks are shown.
     is_perfect = (total_score >= max_score) or (
         len(criteria_evals) > 0 and all(ce.marks_awarded >= ce.max_marks for ce in criteria_evals if ce.max_marks > 0)
     )
     async def _empty() -> list:
         return []
 
-    risk_items, executive_summary, prebid_qa = await asyncio.gather(
+    risk_items, executive_summary, prebid_qa, pq_checks = await asyncio.gather(
         _empty() if is_perfect else stage5_gap_analysis(criteria_evals),
         stage6_executive_summary(total_score, max_score, passed, category_results),
         stage_extract_prebid_qa(prebid_text) if prebid_text.strip() else _empty(),
+        stage_evaluate_pq_criteria(bid_text, pq_criteria),
     )
     prebid_applied = bool(prebid_text.strip())
 
@@ -1084,6 +1152,7 @@ async def _run_pipeline(
         disqualified=disqualified,
         disqualification_reason=disqualification_reason,
         category_results=category_results,
+        pq_checks=pq_checks,
         risk_items=risk_items,
         executive_summary=executive_summary,
         rules=rules,
@@ -1125,11 +1194,14 @@ async def run_full_evaluation(rfp_text: str, bid_text: str, prebid_text: str = "
     if not _rfp_has_explicit_marks(rfp_text):
         print("[Pipeline] No explicit scoring marks found in RFP text — raising NO_RULES_FOUND without LLM call")
         raise ValueError("NO_RULES_FOUND")
-    rules = await stage2_extract_rules(rfp_text)
+    rules, pq_criteria = await asyncio.gather(
+        stage2_extract_rules(rfp_text),
+        stage_extract_pq_criteria(rfp_text),
+    )
     if not rules.rules_found:
         raise ValueError("NO_RULES_FOUND")
     rfp_scoring_text = _extract_scoring_sections(rfp_text, MAX_RFP_CHARS)
-    return await _run_pipeline(bid_text, rules, rfp_scoring_text, prebid_text=prebid_text)
+    return await _run_pipeline(bid_text, rules, rfp_scoring_text, prebid_text=prebid_text, pq_criteria=pq_criteria)
 
 
 async def run_evaluation_with_rules(bid_text: str, rules: EvaluationRules) -> EvaluationReport:

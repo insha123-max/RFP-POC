@@ -69,6 +69,14 @@ class PrebidQA(BaseModel):
     answer: str
 
 
+class PQCheck(BaseModel):
+    criterion: str          # PQ requirement name
+    detail: str             # what was checked
+    status: str             # "Met" or "Not Met"
+    vendor_claim: str       # evidence found in bid
+    justification: str      # one-sentence reason
+
+
 class EvaluationReport(BaseModel):
     total_score: float
     max_score: float
@@ -77,6 +85,7 @@ class EvaluationReport(BaseModel):
     disqualified: bool
     disqualification_reason: Optional[str] = None
     category_results: List[CategoryResult]
+    pq_checks: List[PQCheck] = []
     risk_items: List[RiskItem] = []
     executive_summary: str
     rules: EvaluationRules
