@@ -1,5 +1,6 @@
 """7-stage RFP evaluation pipeline powered by Ollama (gemma4:26b primary)."""
 
+import asyncio
 import json
 import os
 import re
@@ -39,10 +40,10 @@ if not OLLAMA_BASE_URL:
 # minimax-m2.7:cloud is cloud-backed and is a strong secondary.
 # llama3:latest / llama3:8b are the same model (same digest) — used as fallback.
 _MODELS = [
-    "gemma4:26b",              # primary — largest, best reasoning
-    "minimax-m2.7:cloud",      # secondary — cloud-backed, good quality
-    "llama3:latest",           # fallback — solid 8B general model
-    "llama3:8b",               # identical to llama3:latest, keeps slot if name differs
+    "minimax-m2.7:cloud",      # primary — cloud-backed, fast inference
+    "llama3:8b",               # fallback — CPU inference
+    "llama3:latest",           # identical to llama3:8b, backup slot
+    "gemma4:26b",              # last resort — large/slow on CPU
 ]
 MODEL_NAME = _MODELS[0]
 
@@ -91,7 +92,7 @@ async def _call(prompt: str, system: str = SYSTEM) -> str:
                     {"role": "user",   "content": prompt},
                 ],
                 temperature=0.1,
-                max_tokens=2048,
+                max_tokens=400,
             )
             return resp.choices[0].message.content
         except Exception as exc:
@@ -482,9 +483,16 @@ async def stage2_extract_rules(rfp_text: str) -> EvaluationRules:
     # Trust the LLM's own rules_found signal — True only when it sees EXPLICIT numeric marks
     any_explicit_rules = False
 
-    for chunk in chunks:
+    chunk_results = await asyncio.gather(
+        *[_call(_rfp_extract_prompt(c)) for c in chunks],
+        return_exceptions=True,
+    )
+    for raw in chunk_results:
         try:
-            data = _parse_object(await _call(_rfp_extract_prompt(chunk)))
+            if isinstance(raw, Exception):
+                print(f"[Stage2 chunk] error: {raw}")
+                continue
+            data = _parse_object(raw)
 
             # Only accept categories from this chunk if the LLM confirmed explicit rules
             chunk_has_rules = bool(data.get("rules_found", False))
@@ -672,9 +680,8 @@ async def stage3_parse_vendor_response(
     
     Accepts optional rfp_scoring_text so the LLM can evaluate tiered marks directly.
     """
-    all_evals: List[CriterionEvaluation] = []
-
-    for cat in rules.scoring_categories:
+    async def _eval_category(cat: ScoringCategory) -> List[CriterionEvaluation]:
+        evals: List[CriterionEvaluation] = []
         # Build criteria list for this category only
         criteria_list = []
         if cat.subcriteria:
@@ -819,16 +826,27 @@ Return ONLY a JSON array. For each criterion include marks_awarded as the ACTUAL
                 if "marks_awarded" not in item:
                     item["marks_awarded"] = 0.0
                 item.pop("is_mandatory", None)
-                all_evals.append(CriterionEvaluation(**item))
+                evals.append(CriterionEvaluation(**item))
         except Exception:
             for c in criteria_list:
-                all_evals.append(CriterionEvaluation(
+                evals.append(CriterionEvaluation(
                     criterion=c["criterion"], category=c["category"],
                     max_marks=c["max_marks"], vendor_claim="Evaluation error",
                     source_reference="Not found", compliance_status="Not Met",
                     confidence="Low", justification="Parsing failed for this category.",
                 ))
+        return evals
 
+    cat_eval_lists = await asyncio.gather(
+        *[_eval_category(cat) for cat in rules.scoring_categories],
+        return_exceptions=True,
+    )
+    all_evals: List[CriterionEvaluation] = []
+    for result in cat_eval_lists:
+        if isinstance(result, Exception):
+            print(f"[Stage3] Category evaluation error: {result}")
+        else:
+            all_evals.extend(result)
     return all_evals
 
 
@@ -1048,15 +1066,14 @@ async def _run_pipeline(
     is_perfect = (total_score >= max_score) or (
         len(criteria_evals) > 0 and all(ce.marks_awarded >= ce.max_marks for ce in criteria_evals if ce.max_marks > 0)
     )
-    if is_perfect:
-        risk_items = []
-    else:
-        risk_items = await stage5_gap_analysis(criteria_evals)
+    async def _empty() -> list:
+        return []
 
-    executive_summary = await stage6_executive_summary(
-        total_score, max_score, passed, category_results
+    risk_items, executive_summary, prebid_qa = await asyncio.gather(
+        _empty() if is_perfect else stage5_gap_analysis(criteria_evals),
+        stage6_executive_summary(total_score, max_score, passed, category_results),
+        stage_extract_prebid_qa(prebid_text) if prebid_text.strip() else _empty(),
     )
-    prebid_qa      = await stage_extract_prebid_qa(prebid_text) if prebid_text.strip() else []
     prebid_applied = bool(prebid_text.strip())
 
     return EvaluationReport(
@@ -1145,9 +1162,16 @@ async def stage2_extract_pqtq_rules(rfp_text: str) -> EvaluationRules:
     cat_mins: dict[str, dict] = {}
     any_explicit_rules = False
 
-    for chunk in chunks:
+    chunk_results = await asyncio.gather(
+        *[_call(_rfp_pqtq_prompt(c)) for c in chunks],
+        return_exceptions=True,
+    )
+    for raw in chunk_results:
         try:
-            data = _parse_object(await _call(_rfp_pqtq_prompt(chunk)))
+            if isinstance(raw, Exception):
+                print(f"[Stage2-PQTQ chunk] error: {raw}")
+                continue
+            data = _parse_object(raw)
             chunk_has_rules = bool(data.get("rules_found", False))
             if chunk_has_rules:
                 any_explicit_rules = True
