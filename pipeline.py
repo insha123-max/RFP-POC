@@ -76,7 +76,7 @@ def get_client() -> AsyncOpenAI:
     return _client
 
 
-async def _call(prompt: str, system: str = SYSTEM) -> str:
+async def _call(prompt: str, system: str = SYSTEM, max_tokens: int = 1200) -> str:
     """Try each model in _MODELS; fall back to next on error.
 
     Ollama is self-hosted so there is no rate-limit quota, but individual
@@ -92,7 +92,7 @@ async def _call(prompt: str, system: str = SYSTEM) -> str:
                     {"role": "user",   "content": prompt},
                 ],
                 temperature=0.1,
-                max_tokens=2048,
+                max_tokens=max_tokens,
             )
             return resp.choices[0].message.content
         except Exception as exc:
@@ -361,10 +361,12 @@ def _rfp_extract_prompt(chunk: str) -> str:
         f"that assigns numeric Max. Marks to evaluation criteria. Copy criterion names and marks EXACTLY "
         f"as written. Do NOT rename, paraphrase, merge, split, or invent anything.\n\n"
         f"{chunk}\n\n"
-        f"=== RULE A — IGNORE ELIGIBILITY / PRE-QUALIFICATION SECTIONS ===\n"
+        f"=== RULE A — PRE-QUALIFICATION / ELIGIBILITY CRITERIA ===\n"
         f"Sections titled 'Eligibility Criteria', 'Pre-Qualification', 'PQ Criteria', 'Mandatory Requirements'\n"
-        f"list pass/fail conditions WITHOUT marks. DO NOT extract these at all.\n"
-        f"Example of what to IGNORE: 'Minimum turnover Rs 4.5 crore', 'At least 1 similar work of Rs 2 crore'\n\n"
+        f"contain pass/fail conditions WITHOUT numeric marks. Extract EACH condition as a separate scoring_category with max_marks=1.\n"
+        f"Set subcriteria to a single entry describing the requirement exactly as written.\n"
+        f"Example: category='Minimum Annual Turnover', max_marks=1, "
+        f"subcriteria=[{{criterion:'Annual turnover >= Rs 4.5 crore in last 3 years', max_marks:1}}]\n\n"
         f"=== RULE B — EXTRACT FROM THE SCORING TABLE ONLY ===\n"
         f"Indian govt RFPs have a scoring table with columns: S.No | Evaluation Criteria | Sub-Criteria | Max. Marks | Evaluation Basis\n"
         f"Each ROW of this table becomes one scoring_category. Use the exact text from 'Evaluation Criteria' column as the category name.\n"
@@ -380,9 +382,12 @@ def _rfp_extract_prompt(chunk: str) -> str:
         f'  subcriteria: [{{"criterion":"1 certified employee = 4 marks; each additional = 4 marks; maximum 20 marks (5 employees)","max_marks":20}}]\n'
         f"Example for 'Average Annual Turnover' (Rs 4.5 crore=5 marks, +0.25 per crore above, max 10):\n"
         f'  subcriteria: [{{"criterion":"Rs 4.5 crore = 5 marks; above Rs 4.5 crore: +0.25 marks per Rs 1 crore; maximum 10 marks","max_marks":10}}]\n\n'
-        f"=== RULE D — DO NOT INVENT ===\n"
-        f"Set rules_found=false if this text has no scoring table with explicit Max. Marks column.\n"
-        f"Never guess, assume, or invent marks. Never use eligibility thresholds as marks.\n\n"
+        f"=== RULE D — WHEN TO SET rules_found ===\n"
+        f"Set rules_found=true if scoring_categories is non-empty — meaning you extracted EITHER:\n"
+        f"  (a) rows from a numeric scoring table with explicit Max. Marks (per RULE B), OR\n"
+        f"  (b) pass/fail eligibility conditions extracted per RULE A (with max_marks=1).\n"
+        f"Set rules_found=false ONLY if scoring_categories is empty (no criteria of any kind found in this chunk).\n"
+        f"Never guess marks. Never use eligibility thresholds as numeric scores.\n\n"
         f"=== RULE E — PRESERVE EXACT NAMES ===\n"
         f"Copy criterion and category names verbatim from the RFP. Do not rephrase or shorten.\n\n"
         f"Return ONLY JSON:\n"
@@ -458,23 +463,23 @@ def _base_cat_key(key: str) -> str:
 
 
 async def stage2_extract_rules(rfp_text: str) -> EvaluationRules:
-    keyword_text = _extract_scoring_sections(rfp_text, MAX_RFP_CHARS)
-    chunks = [keyword_text]
-    scoring_start = _find_scoring_section_start(rfp_text)
-    if scoring_start >= 0:
-        # Anchor found: continue sequentially from that same offset so criteria
-        # that span beyond the first MAX_RFP_CHARS window are captured without
-        # bleeding into pre-bid Q&A at the document start.
-        for i in range(1, 3):
-            chunk_start = scoring_start + i * MAX_RFP_CHARS
-            if chunk_start < len(rfp_text):
-                chunks.append(rfp_text[chunk_start: chunk_start + MAX_RFP_CHARS])
-    else:
-        # No anchor — fall back to sequential chunks from the document start.
-        for start in range(0, min(len(rfp_text), MAX_RFP_CHARS * 3), MAX_RFP_CHARS):
-            chunks.append(rfp_text[start: start + MAX_RFP_CHARS])
-
-    chunks = [c for c in chunks if c.strip()][:4]  # at most 4 LLM calls
+    # Chunk 0: keyword-dense extraction (focuses on scoring table language)
+    chunks = [_extract_scoring_sections(rfp_text, MAX_RFP_CHARS)]
+    # Add every sequential 15K window of the full document so no section is missed.
+    # PQ eligibility criteria are often in a different part of the doc from the scoring table.
+    for start in range(0, len(rfp_text), MAX_RFP_CHARS):
+        chunk = rfp_text[start: start + MAX_RFP_CHARS]
+        if chunk.strip():
+            chunks.append(chunk)
+    # Deduplicate — chunk 0 may overlap with a positional chunk
+    seen: set = set()
+    unique: list = []
+    for c in chunks:
+        key = c[:200]
+        if key not in seen:
+            seen.add(key)
+            unique.append(c)
+    chunks = unique
 
     # Merge categories from all chunks
     all_cats: dict[str, dict] = {}
@@ -484,7 +489,7 @@ async def stage2_extract_rules(rfp_text: str) -> EvaluationRules:
     any_explicit_rules = False
 
     chunk_results = await asyncio.gather(
-        *[_call(_rfp_extract_prompt(c)) for c in chunks],
+        *[_call(_rfp_extract_prompt(c), max_tokens=2000) for c in chunks],
         return_exceptions=True,
     )
     for raw in chunk_results:
@@ -533,12 +538,26 @@ async def stage2_extract_rules(rfp_text: str) -> EvaluationRules:
                     if not isinstance(subs, list):
                         subs = []
                     exist_subs = {s["criterion"].lower() for s in subs if isinstance(s, dict) and "criterion" in s}
+                    exist_marks = {float(s.get("max_marks", 0)) for s in subs if isinstance(s, dict)}
                     cat_subs = cat.get("subcriteria", [])
                     if not isinstance(cat_subs, list):
                         cat_subs = []
                     for sub in cat_subs:
-                        if isinstance(sub, dict) and sub.get("criterion", "").lower() not in exist_subs:
-                            all_cats[matched_key].setdefault("subcriteria", []).append(sub)
+                        if not isinstance(sub, dict):
+                            continue
+                        sub_text = sub.get("criterion", "").lower()
+                        sub_marks = float(sub.get("max_marks", 0))
+                        if sub_text in exist_subs:
+                            continue  # exact text duplicate
+                        if sub_marks in exist_marks:
+                            # Same max_marks already present — keep the longer description
+                            for i, existing in enumerate(all_cats[matched_key].get("subcriteria", [])):
+                                if float(existing.get("max_marks", 0)) == sub_marks:
+                                    if len(sub_text) > len(existing.get("criterion", "").lower()):
+                                        all_cats[matched_key]["subcriteria"][i] = sub
+                            continue
+                        all_cats[matched_key].setdefault("subcriteria", []).append(sub)
+                        exist_marks.add(sub_marks)
 
             thresh = data.get("threshold", {})
             if not isinstance(thresh, dict):
@@ -970,7 +989,7 @@ Return ONLY a JSON array of up to 7 items:
   }}
 ]"""
 
-    items = _parse_array(await _call(prompt))
+    items = _parse_array(await _call(prompt, max_tokens=500))
     if not isinstance(items, list):
         items = []
     risks = []
@@ -1007,7 +1026,7 @@ Category Breakdown: {'; '.join(cat_summary)}
 Cover: overall result, key strengths, and key weaknesses. Use plain, non-technical language.
 Return ONLY the summary text — no JSON, no headers."""
 
-    return (await _call(prompt)).strip()
+    return (await _call(prompt, max_tokens=200)).strip()
 
 
 # ---------------------------------------------------------------------------
@@ -1120,11 +1139,6 @@ async def run_full_evaluation(rfp_text: str, bid_text: str, prebid_text: str = "
             + "\n\n=== PRE-BID CLARIFICATIONS (take precedence over original criteria above) ===\n\n"
             + prebid_text.strip()
         )
-    # Fast text-level guard: if the RFP has no explicit numeric marks at all,
-    # skip the expensive LLM stage2 call and go straight to custom-rules flow.
-    if not _rfp_has_explicit_marks(rfp_text):
-        print("[Pipeline] No explicit scoring marks found in RFP text — raising NO_RULES_FOUND without LLM call")
-        raise ValueError("NO_RULES_FOUND")
     rules = await stage2_extract_rules(rfp_text)
     if not rules.rules_found:
         raise ValueError("NO_RULES_FOUND")
@@ -1143,19 +1157,19 @@ async def run_evaluation_with_rules(bid_text: str, rules: EvaluationRules) -> Ev
 
 async def stage2_extract_pqtq_rules(rfp_text: str) -> EvaluationRules:
     """Like stage2_extract_rules but scoped to PQ/TQ criteria only."""
-    keyword_text = _extract_scoring_sections(rfp_text, MAX_RFP_CHARS)
-    chunks = [keyword_text]
-    scoring_start = _find_scoring_section_start(rfp_text)
-    if scoring_start >= 0:
-        for i in range(1, 3):
-            chunk_start = scoring_start + i * MAX_RFP_CHARS
-            if chunk_start < len(rfp_text):
-                chunks.append(rfp_text[chunk_start: chunk_start + MAX_RFP_CHARS])
-    else:
-        for start in range(0, min(len(rfp_text), MAX_RFP_CHARS * 3), MAX_RFP_CHARS):
-            chunks.append(rfp_text[start: start + MAX_RFP_CHARS])
-
-    chunks = [c for c in chunks if c.strip()][:4]
+    chunks = [_extract_scoring_sections(rfp_text, MAX_RFP_CHARS)]
+    for start in range(0, len(rfp_text), MAX_RFP_CHARS):
+        chunk = rfp_text[start: start + MAX_RFP_CHARS]
+        if chunk.strip():
+            chunks.append(chunk)
+    seen: set = set()
+    unique: list = []
+    for c in chunks:
+        key = c[:200]
+        if key not in seen:
+            seen.add(key)
+            unique.append(c)
+    chunks = unique
 
     all_cats: dict[str, dict] = {}
     pass_mark = 0.0
@@ -1163,7 +1177,7 @@ async def stage2_extract_pqtq_rules(rfp_text: str) -> EvaluationRules:
     any_explicit_rules = False
 
     chunk_results = await asyncio.gather(
-        *[_call(_rfp_pqtq_prompt(c)) for c in chunks],
+        *[_call(_rfp_pqtq_prompt(c), max_tokens=2000) for c in chunks],
         return_exceptions=True,
     )
     for raw in chunk_results:
@@ -1205,12 +1219,26 @@ async def stage2_extract_pqtq_rules(rfp_text: str) -> EvaluationRules:
                     if not isinstance(subs, list):
                         subs = []
                     exist_subs = {s["criterion"].lower() for s in subs if isinstance(s, dict) and "criterion" in s}
+                    exist_marks = {float(s.get("max_marks", 0)) for s in subs if isinstance(s, dict)}
                     cat_subs = cat.get("subcriteria", [])
                     if not isinstance(cat_subs, list):
                         cat_subs = []
                     for sub in cat_subs:
-                        if isinstance(sub, dict) and sub.get("criterion", "").lower() not in exist_subs:
-                            all_cats[matched_key].setdefault("subcriteria", []).append(sub)
+                        if not isinstance(sub, dict):
+                            continue
+                        sub_text = sub.get("criterion", "").lower()
+                        sub_marks = float(sub.get("max_marks", 0))
+                        if sub_text in exist_subs:
+                            continue  # exact text duplicate
+                        if sub_marks in exist_marks:
+                            # Same max_marks already present — keep the longer description
+                            for i, existing in enumerate(all_cats[matched_key].get("subcriteria", [])):
+                                if float(existing.get("max_marks", 0)) == sub_marks:
+                                    if len(sub_text) > len(existing.get("criterion", "").lower()):
+                                        all_cats[matched_key]["subcriteria"][i] = sub
+                            continue
+                        all_cats[matched_key].setdefault("subcriteria", []).append(sub)
+                        exist_marks.add(sub_marks)
 
             thresh = data.get("threshold", {})
             if not isinstance(thresh, dict):
@@ -1304,8 +1332,6 @@ _TQ_KEYWORDS = ["technical qual", "technical eval", "tq —", "tq-", " tq ", "(t
 
 async def run_pqtq_evaluation(rfp_text: str, bid_text: str) -> EvaluationReport:
     """Evaluate bid scoped to Pre-Qualification / Technical Qualification criteria only."""
-    if not _rfp_has_explicit_marks(rfp_text):
-        raise ValueError("NO_RULES_FOUND")
     rules = await stage2_extract_pqtq_rules(rfp_text)
     if not rules.rules_found:
         raise ValueError("NO_RULES_FOUND")
