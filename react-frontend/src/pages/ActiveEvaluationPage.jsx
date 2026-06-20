@@ -148,15 +148,15 @@ function RequirementsTable({ criteria, pqChecks = [], title = 'Requirements Asse
   const [filter, setFilter] = useState('all')
 
   const pqRows = pqChecks.map(chk => ({
-    name: chk.condition,
+    name: chk.criterion || chk.condition || '',
     category: 'Pre-Qualification',
     weight: 'Critical',
-    v1: chk.met ? 'Met' : 'Not Met',
+    v1: chk.status || (chk.met ? 'Met' : 'Not Met'),
     threshold_logic: 'PQ Pass/Fail',
-    justification: chk.note || '',
+    justification: chk.justification || chk.detail || chk.note || '',
     qualification_type: 'PQ',
     isPQ: true,
-    met: chk.met,
+    met: chk.status === 'Met' || chk.met === true,
   }))
 
   const allRows = [...pqRows, ...criteria]
@@ -653,7 +653,7 @@ export default function ActiveEvaluationPage() {
       ) : (
         <RequirementsTable
           criteria={criteria}
-          pqChecks={[]}
+          pqChecks={report.pq_checks || []}
           title="Requirements Assessment"
         />
       )}
