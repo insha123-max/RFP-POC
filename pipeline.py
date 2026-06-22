@@ -77,51 +77,85 @@ def get_client() -> AsyncOpenAI:
     return _client
 
 
+# Limit concurrent LLM calls so the cloud-backed primary model (minimax-m2.7:cloud)
+# is not flooded by asyncio.gather firing all chunks simultaneously → 429 errors.
+_CALL_SEMAPHORE: asyncio.Semaphore | None = None
+
+
+def _get_semaphore() -> asyncio.Semaphore:
+    global _CALL_SEMAPHORE
+    if _CALL_SEMAPHORE is None:
+        _CALL_SEMAPHORE = asyncio.Semaphore(3)
+    return _CALL_SEMAPHORE
+
+
 async def _call(prompt: str, system: str = SYSTEM, max_tokens: int = 1200) -> str:
     """Try each model in _MODELS; fall back to next on error.
 
-    Ollama is self-hosted so there is no rate-limit quota, but individual
-    models can be unavailable (not pulled) or may time out on heavy load.
+    Limits concurrent requests to 3 via a semaphore so the cloud primary model
+    is not rate-limited when many chunks run in parallel.
     """
-    last_exc: Exception = RuntimeError("No models available")
-    for model in _MODELS:
-        try:
-            resp = await get_client().chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": system},
-                    {"role": "user",   "content": prompt},
-                ],
-                temperature=0.1,
-                max_tokens=max_tokens,
-            )
-            return resp.choices[0].message.content
-        except Exception as exc:
-            err = str(exc)
-            is_not_found = (
-                "model" in err.lower() and ("not found" in err.lower() or "pull" in err.lower())
-            ) or "404" in err
-            is_timeout = "timeout" in err.lower() or "timed out" in err.lower()
+    async with _get_semaphore():
+        last_exc: Exception = RuntimeError("No models available")
+        for model in _MODELS:
+            try:
+                resp = await get_client().chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user",   "content": prompt},
+                    ],
+                    temperature=0.1,
+                    max_tokens=max_tokens,
+                )
+                return resp.choices[0].message.content
+            except Exception as exc:
+                err = str(exc)
+                is_not_found = (
+                    "model" in err.lower() and ("not found" in err.lower() or "pull" in err.lower())
+                ) or "404" in err
+                is_timeout = "timeout" in err.lower() or "timed out" in err.lower()
+                is_rate_limited = "429" in err or "too many concurrent" in err.lower()
 
-            if is_not_found:
-                print(f"[_call] {model} not available on Ollama, skipping. Error: {err[:160]}")
-                last_exc = exc
-                continue  # try next model immediately
+                if is_not_found:
+                    print(f"[_call] {model} not available on Ollama, skipping. Error: {err[:160]}")
+                    last_exc = exc
+                    continue
 
-            if is_timeout:
-                print(f"[_call] {model} timed out, trying next model. Error: {err[:160]}")
+                if is_timeout:
+                    print(f"[_call] {model} timed out, trying next model. Error: {err[:160]}")
+                    last_exc = exc
+                    continue
+
+                if is_rate_limited:
+                    # Pause briefly and retry the same model once before falling through
+                    print(f"[_call] {model} rate-limited (429), waiting 2s then retrying...")
+                    await asyncio.sleep(2)
+                    try:
+                        resp = await get_client().chat.completions.create(
+                            model=model,
+                            messages=[
+                                {"role": "system", "content": system},
+                                {"role": "user",   "content": prompt},
+                            ],
+                            temperature=0.1,
+                            max_tokens=max_tokens,
+                        )
+                        return resp.choices[0].message.content
+                    except Exception as retry_exc:
+                        print(f"[_call] {model} retry also failed, falling to next model. Error: {str(retry_exc)[:160]}")
+                        last_exc = retry_exc
+                        continue
+
+                # Connection error or unexpected — try next model
+                print(f"[_call] {model} error: {err[:200]}")
                 last_exc = exc
                 continue
 
-            # Connection error or unexpected — still try next model but log it
-            print(f"[_call] {model} error: {err[:200]}")
-            last_exc = exc
-            continue
-
-    raise RuntimeError(
-        f"All Ollama models failed. Ensure the Ollama server at {OLLAMA_BASE_URL} is reachable "
-        f"and at least one of {_MODELS} is pulled. Last error: {last_exc}"
-    )
+        raise RuntimeError(
+            f"All Ollama models failed. Ensure the Ollama server at {OLLAMA_BASE_URL} is reachable "
+            f"and at least one of {_MODELS} is pulled. Last error: {last_exc}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -467,17 +501,29 @@ def _bid_readiness_prompt(text: str) -> str:
         f"conditions and Technical Qualification (TQ) scored criteria.\n\n"
         f"DOCUMENT:\n{text}\n\n"
         f"=== OUTPUT RULES ===\n\n"
-        f"PART A — PQ_CRITERIA (mandatory eligibility, pass/fail, NO marks attached):\n"
-        f"  • One entry per TOP-LEVEL requirement. Group all sub-conditions of a single requirement\n"
-        f"    into ONE entry — put the sub-conditions in the detail field, NOT as separate entries.\n"
-        f"  • Example: 'EMD/Bid Security' is ONE entry even if it has 5 sub-conditions about amount,\n"
-        f"    format, validity, and forfeiture. 'Blacklisting Declaration' is ONE entry even if it\n"
-        f"    mentions State, Central, and PSU blacklisting separately.\n"
-        f"  • Write criterion as a short label (≤12 words). Write detail as the full requirement.\n"
-        f"  • Include: financial thresholds, EMD/bid security, registrations, experience minimums,\n"
-        f"    certifications, team/staff, Make-in-India, blacklisting, office location.\n"
-        f"  • AIM for 10–25 total PQ entries. If you see more than 25, you are over-splitting.\n"
-        f"  • Do NOT include scoring thresholds (like 'must score 70%') — those are TQ rules.\n\n"
+        f"PART A — PQ_CRITERIA (ELIGIBILITY CRITERIA ONLY — pass/fail thresholds a vendor must meet):\n"
+        f"\n"
+        f"  INCLUDE only criteria that test whether the vendor QUALIFIES:\n"
+        f"    ✓ Minimum annual turnover / financial capacity thresholds\n"
+        f"    ✓ Minimum years in business / operational experience\n"
+        f"    ✓ Minimum number of similar projects completed (with value/scale)\n"
+        f"    ✓ Required registrations, licences, or certifications (ISO, CMMI, GST, etc.)\n"
+        f"    ✓ Minimum team size or key personnel qualifications\n"
+        f"    ✓ Geographic / office presence requirements\n"
+        f"    ✓ Make-in-India / local content requirements\n"
+        f"\n"
+        f"  EXCLUDE procedural and compliance items — do NOT list these:\n"
+        f"    ✗ EMD / Earnest Money Deposit / Bid Security (submission instructions)\n"
+        f"    ✗ Declarations, affidavits, undertakings on stamp paper\n"
+        f"    ✗ Blacklisting / debarment / insolvency declarations (these are document submissions)\n"
+        f"    ✗ Power of Attorney / authorisation letters\n"
+        f"    ✗ Integrity Pact / NDA / non-disclosure agreements\n"
+        f"    ✗ Document checklist items (what to submit and when)\n"
+        f"    ✗ Bid validity period, performance security, contract signing procedures\n"
+        f"\n"
+        f"  • One entry per eligibility requirement. Write criterion as a short label (≤12 words).\n"
+        f"  • Write detail with the specific threshold or standard required.\n"
+        f"  • AIM for 5–15 PQ entries total. If you have more, you are including procedural items.\n\n"
         f"PART B — TQ_CRITERIA (scored criteria with explicit marks/points):\n"
         f"  • Extract only criteria with explicit numeric marks/scores/weightage.\n"
         f"  • Rewrite each in plain English showing exactly what earns the marks.\n"
