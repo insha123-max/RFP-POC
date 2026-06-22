@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useEvaluation } from '../context/EvaluationContext'
 import { exportWord } from '../api'
@@ -209,11 +209,30 @@ function RequirementsTable({ criteria, pqChecks = [], title = 'Requirements Asse
             </tr>
           </thead>
           <tbody>
-            {filtered.map((c, i) => (
-              <tr key={i} style={{ background: c.isPQ ? (c.met ? '#FEFCE8' : '#FFF7F7') : undefined }}>
+            {filtered.map((c, i) => {
+              const prevIsPQ = i > 0 && filtered[i - 1].isPQ
+              const showTQDivider = !c.isPQ && prevIsPQ
+              return (
+              <React.Fragment key={i}>
+                {showTQDivider && (
+                  <tr key={`div-${i}`}>
+                    <td colSpan={5} style={{ padding: '4px 12px', background: '#EDE9FE', fontSize: '0.68rem', fontWeight: 800, color: '#5B21B6', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+                      {qualBadge('TQ')} Technical Qualification Criteria
+                    </td>
+                  </tr>
+                )}
+                {i === 0 && c.isPQ && (
+                  <tr key={`pq-hdr-${i}`}>
+                    <td colSpan={5} style={{ padding: '4px 12px', background: '#FEF3C7', fontSize: '0.68rem', fontWeight: 800, color: '#92400E', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+                      {qualBadge('PQ')} Pre-Qualification / Eligibility Criteria
+                    </td>
+                  </tr>
+                )}
+              <tr key={i} style={{ background: c.isPQ ? (c.met ? '#FEFCE8' : '#FFF7F7') : c.isSynth ? '#FAFAFA' : undefined }}>
                 <td>
-                  <div style={{ fontWeight: 600, fontSize: '0.875rem', color: '#111827' }}>
+                  <div style={{ fontWeight: 600, fontSize: '0.875rem', color: c.isSynth ? '#6B7280' : '#111827' }}>
                     {c.name}{qualBadge(c.qualification_type)}
+                    {c.isSynth && <span style={{ fontSize: '0.6rem', color: '#9CA3AF', marginLeft: 6, fontWeight: 500 }}>not evaluated</span>}
                   </div>
                   {c.justification && (
                     <div style={{ fontSize: '0.73rem', color: '#6B7280', marginTop: 3, lineHeight: 1.45 }}>{c.justification}</div>
@@ -226,7 +245,9 @@ function RequirementsTable({ criteria, pqChecks = [], title = 'Requirements Asse
                   {c.isPQ ? (c.met ? 'Pass' : 'Fail') : `${c.marks_awarded}/${c.max_marks}`}
                 </td>
               </tr>
-            ))}
+              </React.Fragment>
+              )
+            })}
           </tbody>
         </table>
       </div>
@@ -351,18 +372,74 @@ export default function ActiveEvaluationPage() {
   }
 
   const allRawCriteria = report.category_results.flatMap(cr => cr.criteria)
-  const pqtqCriteria = allRawCriteria.filter(c => c.qualification_type === 'PQ' || c.qualification_type === 'TQ')
-  const isPQTQ = pqtqCriteria.length > 0
 
-  // PQ criteria shown as pass/fail pqRows in the table — exclude from scored rows to avoid duplication
-  const criteria = allRawCriteria
-    .filter(c => c.qualification_type !== 'PQ')
-    .map(c => {
+  // isPQTQ is true only when EVERY scoring category has an explicit PQ/TQ label —
+  // this only happens for reports produced by run_pqtq_evaluation.
+  // Standard evaluations (PNB, RITES, etc.) have qualification_type='' on categories.
+  const isPQTQ = (report.rules?.scoring_categories?.length ?? 0) > 0 &&
+    report.rules.scoring_categories.every(cat => cat.qualification_type === 'PQ' || cat.qualification_type === 'TQ')
+
+  // Flat table rows: all evaluated criteria + synthesize any sub-criteria the LLM
+  // skipped (categories that returned 0 individual criterion evals despite having
+  // subcriteria in the rules — shown as Not Met / 0 marks with a note).
+  const evaluatedKeys = new Set(allRawCriteria.map(c => c.criterion.trim().toLowerCase()))
+
+  const synthRows = []
+  const coveredCategories = new Set(allRawCriteria.map(c => {
+    const cr = report.category_results.find(r => r.criteria.includes(c))
+    return cr?.category ?? ''
+  }))
+
+  for (const ruleCat of (report.rules?.scoring_categories || [])) {
+    const catResult = report.category_results.find(cr => cr.category === ruleCat.category)
+    if (!catResult) continue
+
+    if ((ruleCat.subcriteria || []).length > 0) {
+      // Synthesize a row for every sub-criterion not already individually evaluated
+      for (const sub of ruleCat.subcriteria) {
+        const key = sub.criterion.trim().toLowerCase()
+        const alreadyEvaluated = [...evaluatedKeys].some(ek =>
+          ek.includes(key.slice(0, 28)) || key.includes(ek.slice(0, 28))
+        )
+        if (alreadyEvaluated) continue
+        synthRows.push({
+          name: sub.criterion,
+          category: ruleCat.category,
+          v1: 'Not Met',
+          justification: 'Not individually evaluated — no supporting evidence found in bid document.',
+          vendor_claim: 'Not found',
+          marks_awarded: 0,
+          max_marks: sub.max_marks,
+          threshold_logic: '50% Fallback',
+          qualification_type: ruleCat.qualification_type || 'TQ',
+          isSynth: true,
+        })
+      }
+    } else if (!coveredCategories.has(ruleCat.category) && catResult.criteria.length === 0) {
+      // No subcriteria in rules and no individual evals — show the category as a single row
+      synthRows.push({
+        name: ruleCat.category,
+        category: ruleCat.category,
+        v1: catResult.passed ? 'Met' : 'Not Met',
+        justification: catResult.criteria.length === 0
+          ? 'Category-level result — no individual sub-criteria were evaluated.'
+          : '',
+        vendor_claim: 'Not found',
+        marks_awarded: catResult.marks_awarded,
+        max_marks: catResult.max_marks,
+        threshold_logic: '50% Fallback',
+        qualification_type: ruleCat.qualification_type || 'TQ',
+        isSynth: true,
+      })
+    }
+  }
+
+  const criteria = [
+    ...allRawCriteria.map(c => {
       const cr = report.category_results.find(r => r.criteria.includes(c))
       return {
         name: c.criterion,
         category: cr?.category ?? '',
-
         v1: c.compliance_status,
         justification: c.justification,
         vendor_claim: c.vendor_claim,
@@ -371,17 +448,19 @@ export default function ActiveEvaluationPage() {
         marks_awarded: c.marks_awarded,
         max_marks: c.max_marks,
         threshold_logic: c.threshold_logic || '50% Fallback',
-        qualification_type: c.qualification_type || '',
+        qualification_type: c.qualification_type || 'TQ',
       }
-    })
+    }),
+    ...synthRows,
+  ]
 
+  // PQTQ mode: split evaluated criteria into separate PQ and TQ tables
   const tqTableRows = isPQTQ
     ? allRawCriteria.filter(c => c.qualification_type === 'TQ').map(c => {
         const cr = report.category_results.find(r => r.criteria.includes(c))
         return {
           name: c.criterion,
           category: cr?.category ?? '',
-  
           v1: c.compliance_status,
           justification: c.justification,
           vendor_claim: c.vendor_claim,
@@ -389,7 +468,7 @@ export default function ActiveEvaluationPage() {
           confidence: c.confidence,
           marks_awarded: c.marks_awarded,
           max_marks: c.max_marks,
-          threshold_logic: c.threshold_logic || 'PQ Pass/Fail',
+          threshold_logic: c.threshold_logic || 'TQ Scoring',
           qualification_type: 'TQ',
         }
       })
@@ -646,7 +725,7 @@ export default function ActiveEvaluationPage() {
         </div>
       </div>
 
-      {/* Requirements Assessment — split PQ/TQ for PQTQ mode, flat for General */}
+      {/* Requirements Assessment */}
       {isPQTQ ? (
         <>
           {pqChecks.length > 0 && (

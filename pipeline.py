@@ -408,9 +408,30 @@ def _rfp_extract_prompt(chunk: str) -> str:
         f"Never guess marks. Never use eligibility thresholds as numeric scores.\n\n"
         f"=== RULE E — PRESERVE EXACT NAMES ===\n"
         f"Copy criterion and category names verbatim from the RFP. Do not rephrase or shorten.\n\n"
+        f"=== RULE F — NO DOUBLE-COUNTING (HIERARCHICAL TABLES) ===\n"
+        f"Some RFPs have multi-level tables where a top-level header row (e.g. 'Category A: 55 marks') contains\n"
+        f"mid-level rows ('Criterion 1: 40 marks', 'Criterion 2: 15 marks') which contain leaf rows ('Sub-Criterion 1.a: 20 marks', etc.).\n"
+        f"RULE: Create ONE scoring_category per TOP-LEVEL PARENT only (the rows whose marks sum to the grand total).\n"
+        f"List ALL LEAF sub-criteria (the deepest level rows) inside that parent's subcriteria[] array.\n"
+        f"Do NOT create a separate scoring_category for intermediate levels or leaf sub-criteria.\n"
+        f"The sum of all scoring_category max_marks MUST equal the stated grand total (e.g., 100).\n\n"
+        f"HIERARCHICAL EXAMPLE — RFP with Category A (55), Category B (20), Category C (25) = 100 total:\n"
+        f"  Category A contains: Criterion 1 (40 marks) → [Sub-Crit 1.a (20), Sub-Crit 1.b (10), Sub-Crit 1.c (10)]\n"
+        f"                       Criterion 2 (15 marks) → [Sub-Crit 2.a (10), Sub-Crit 2.b (5)]\n"
+        f"  CORRECT output for Category A:\n"
+        f'    {{"category":"Category A: Bidder GenAI Delivery Capability","max_marks":55,"weight_percent":55,\n'
+        f'     "subcriteria":[\n'
+        f'       {{"criterion":"Sub-Criterion 1.a: GenAI Experience in Organisation","max_marks":20}},\n'
+        f'       {{"criterion":"Sub-Criterion 1.b: BFSI GenAI Experience","max_marks":10}},\n'
+        f'       {{"criterion":"Sub-Criterion 1.c: Complexity & Scale of Implementations","max_marks":10}},\n'
+        f'       {{"criterion":"Sub-Criterion 2.a: Banking Domain Expertise on GenAI use cases","max_marks":10}},\n'
+        f'       {{"criterion":"Sub-Criterion 2.b: Cloud & Infrastructure Capabilities","max_marks":5}}\n'
+        f'     ]}}\n'
+        f"  WRONG: Creating 'Criterion 1 (40)' and 'Criterion 2 (15)' as separate scoring_categories — those are intermediate, not top-level.\n"
+        f"  WRONG: Creating 13 scoring_categories (parent + all children) summing to 215.\n\n"
         f"Return ONLY JSON:\n"
-        f'{{"rules_found":true,"scoring_categories":[{{"category":"<exact name from RFP>","max_marks":30,"weight_percent":30,'
-        f'"subcriteria":[{{"criterion":"<ALL tier descriptions in ONE string: tier1=X marks; tier2=Y marks; tier3=Z marks","max_marks":30}}]}}],'
+        f'{{"rules_found":true,"scoring_categories":[{{"category":"<exact name>","max_marks":55,"weight_percent":55,'
+        f'"subcriteria":[{{"criterion":"<leaf sub-criterion name>","max_marks":20}},{{"criterion":"<next leaf>","max_marks":10}}]}}],'
         f'"threshold":{{"overall_pass_mark":70,"category_minimums":[]}}}}\n\n'
         f"If no explicit scoring table with Max. Marks exists in this text: "
         f'return exactly {{"rules_found":false,"scoring_categories":[],"threshold":{{"overall_pass_mark":0,"category_minimums":[]}}}}'
@@ -534,6 +555,65 @@ def _base_cat_key(key: str) -> str:
         if idx > 0:
             return key[:idx].strip()
     return key
+
+
+def _deduplicate_scoring_categories(categories: list) -> list:
+    """Remove sub-criterion entries that are already accounted for inside a parent category.
+
+    When Stage 2 extracts both 'Category A (55 marks)' and its children
+    'Sub-Criterion 1.a (20 marks)', 'Sub-Criterion 1.b (10 marks)' etc. as
+    separate top-level entries, the max_score becomes inflated. This function
+    keeps only the parent entries when double-counting is detected.
+    """
+    if not categories:
+        return categories
+
+    total = sum(c.max_marks for c in categories)
+    # Heuristic: if total marks > 130 for what should be a 100-mark RFP,
+    # there is likely double-counting from hierarchical extraction.
+    if total <= 130:
+        return categories
+
+    # Patterns that identify child/sub-criteria entries (not top-level categories)
+    child_patterns = [
+        r'^sub[-\s]?criterion',
+        r'^criterion\s+\d',
+        r'^\d+[a-z]\.',
+        r'^sub[-\s]?criter',
+    ]
+
+    parents = [
+        c for c in categories
+        if not any(re.match(p, c.category.strip(), re.IGNORECASE) for p in child_patterns)
+    ]
+    children = [
+        c for c in categories
+        if any(re.match(p, c.category.strip(), re.IGNORECASE) for p in child_patterns)
+    ]
+
+    parent_total = sum(c.max_marks for c in parents)
+
+    # If parents alone sum to a reasonable total (≤130), use parents only.
+    # Move children into the subcriteria of their closest parent by marks.
+    if parents and parent_total <= 130:
+        for child in children:
+            # Find the parent whose max_marks is closest (and larger) than this child
+            best = None
+            for p in parents:
+                if p.max_marks >= child.max_marks:
+                    if best is None or p.max_marks < best.max_marks:
+                        best = p
+            if best is not None:
+                from models import SubCriterion
+                best.subcriteria.append(SubCriterion(
+                    criterion=child.category,
+                    max_marks=child.max_marks,
+                ))
+        print(f"[Stage2] Deduplicated {len(children)} child categories into {len(parents)} parent categories (was {total:.0f} marks, now {parent_total:.0f})")
+        return parents
+
+    # Fallback: return original list unchanged
+    return categories
 
 
 async def stage2_extract_rules(rfp_text: str) -> EvaluationRules:
@@ -762,6 +842,10 @@ async def stage2_extract_rules(rfp_text: str) -> EvaluationRules:
 
     # Force rules_found=False if no categories were successfully extracted
     rules_extracted = any_explicit_rules and len(all_cats) > 0
+
+    # Deduplicate hierarchical categories — remove child entries whose marks are
+    # already accounted for inside a parent category.
+    categories = _deduplicate_scoring_categories(categories)
 
     return EvaluationRules(
         rules_found=rules_extracted,
@@ -1143,14 +1227,30 @@ async def stage_extract_prebid_qa(prebid_text: str) -> list:
 # ---------------------------------------------------------------------------
 
 async def stage_extract_pq_criteria(rfp_text: str) -> list:
-    """Extract PQ/eligibility criteria from RFP as a plain list of dicts."""
-    chunk = rfp_text[:MAX_RFP_CHARS]
-    try:
-        raw = await _call(_rfp_pq_extract_prompt(chunk))
-        items = _parse_array(raw)
-        return [i for i in items if isinstance(i, dict) and i.get("criterion")]
-    except Exception:
-        return []
+    """Extract PQ/eligibility criteria from RFP as a plain list of dicts.
+
+    Searches the first 30K chars in two 15K-char passes so PQ sections
+    that appear beyond the first page are not missed.
+    """
+    seen: set[str] = set()
+    all_items: list = []
+    for start in range(0, min(len(rfp_text), MAX_RFP_CHARS * 2), MAX_RFP_CHARS):
+        chunk = rfp_text[start: start + MAX_RFP_CHARS]
+        if not chunk.strip():
+            continue
+        try:
+            raw = await _call(_rfp_pq_extract_prompt(chunk))
+            items = _parse_array(raw)
+            for i in items:
+                if not isinstance(i, dict) or not i.get("criterion"):
+                    continue
+                key = i["criterion"].strip().lower()[:80]
+                if key not in seen:
+                    seen.add(key)
+                    all_items.append(i)
+        except Exception:
+            continue
+    return all_items
 
 
 async def stage_evaluate_pq_criteria(bid_text: str, pq_criteria: list) -> list:
