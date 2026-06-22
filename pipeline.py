@@ -85,7 +85,7 @@ _CALL_SEMAPHORE: asyncio.Semaphore | None = None
 def _get_semaphore() -> asyncio.Semaphore:
     global _CALL_SEMAPHORE
     if _CALL_SEMAPHORE is None:
-        _CALL_SEMAPHORE = asyncio.Semaphore(3)
+        _CALL_SEMAPHORE = asyncio.Semaphore(5)
     return _CALL_SEMAPHORE
 
 
@@ -128,24 +128,9 @@ async def _call(prompt: str, system: str = SYSTEM, max_tokens: int = 1200) -> st
                     continue
 
                 if is_rate_limited:
-                    # Pause briefly and retry the same model once before falling through
-                    print(f"[_call] {model} rate-limited (429), waiting 2s then retrying...")
-                    await asyncio.sleep(2)
-                    try:
-                        resp = await get_client().chat.completions.create(
-                            model=model,
-                            messages=[
-                                {"role": "system", "content": system},
-                                {"role": "user",   "content": prompt},
-                            ],
-                            temperature=0.1,
-                            max_tokens=max_tokens,
-                        )
-                        return resp.choices[0].message.content
-                    except Exception as retry_exc:
-                        print(f"[_call] {model} retry also failed, falling to next model. Error: {str(retry_exc)[:160]}")
-                        last_exc = retry_exc
-                        continue
+                    print(f"[_call] {model} rate-limited (429), trying next model immediately...")
+                    last_exc = exc
+                    continue
 
                 # Connection error or unexpected — try next model
                 print(f"[_call] {model} error: {err[:200]}")
@@ -552,15 +537,23 @@ def _base_cat_key(key: str) -> str:
 
 
 async def stage2_extract_rules(rfp_text: str) -> EvaluationRules:
-    # Chunk 0: keyword-dense extraction (focuses on scoring table language)
+    # Chunk 0: scoring section anchor → anchor+15K (wherever the table lives)
     chunks = [_extract_scoring_sections(rfp_text, MAX_RFP_CHARS)]
-    # Add every sequential 15K window of the full document so no section is missed.
-    # PQ eligibility criteria are often in a different part of the doc from the scoring table.
-    for start in range(0, len(rfp_text), MAX_RFP_CHARS):
+    # Chunks 1-2: first 30K chars — PQ/eligibility criteria live near the start
+    for start in range(0, min(len(rfp_text), MAX_RFP_CHARS * 2), MAX_RFP_CHARS):
         chunk = rfp_text[start: start + MAX_RFP_CHARS]
         if chunk.strip():
             chunks.append(chunk)
-    # Deduplicate — chunk 0 may overlap with a positional chunk
+    # Chunks 3-4: continue after the anchor in case the scoring table spans >15K
+    anchor = _find_scoring_section_start(rfp_text)
+    if anchor >= 0:
+        for i in range(1, 3):
+            start = anchor + i * MAX_RFP_CHARS
+            if start < len(rfp_text):
+                chunk = rfp_text[start: start + MAX_RFP_CHARS]
+                if chunk.strip():
+                    chunks.append(chunk)
+    # Dedup by first 200 chars, hard-cap at 5 to keep total LLM calls to 1 batch
     seen: set = set()
     unique: list = []
     for c in chunks:
@@ -568,7 +561,7 @@ async def stage2_extract_rules(rfp_text: str) -> EvaluationRules:
         if key not in seen:
             seen.add(key)
             unique.append(c)
-    chunks = unique
+    chunks = unique[:5]
 
     # Merge categories from all chunks
     all_cats: dict[str, dict] = {}
@@ -1265,11 +1258,13 @@ async def run_full_evaluation(rfp_text: str, bid_text: str, prebid_text: str = "
             + "\n\n=== PRE-BID CLARIFICATIONS (take precedence over original criteria above) ===\n\n"
             + prebid_text.strip()
         )
-    rules = await stage2_extract_rules(rfp_text)
+    rules, pq_criteria = await asyncio.gather(
+        stage2_extract_rules(rfp_text),
+        stage_extract_pq_criteria(rfp_text),
+    )
     if not rules.rules_found:
         raise ValueError("NO_RULES_FOUND")
     rfp_scoring_text = _extract_scoring_sections(rfp_text, MAX_RFP_CHARS)
-    pq_criteria = await stage_extract_pq_criteria(rfp_text)
     return await _run_pipeline(bid_text, rules, rfp_scoring_text, prebid_text=prebid_text, pq_criteria=pq_criteria)
 
 
@@ -1285,10 +1280,18 @@ async def run_evaluation_with_rules(bid_text: str, rules: EvaluationRules) -> Ev
 async def stage2_extract_pqtq_rules(rfp_text: str) -> EvaluationRules:
     """Like stage2_extract_rules but scoped to PQ/TQ criteria only."""
     chunks = [_extract_scoring_sections(rfp_text, MAX_RFP_CHARS)]
-    for start in range(0, len(rfp_text), MAX_RFP_CHARS):
+    for start in range(0, min(len(rfp_text), MAX_RFP_CHARS * 2), MAX_RFP_CHARS):
         chunk = rfp_text[start: start + MAX_RFP_CHARS]
         if chunk.strip():
             chunks.append(chunk)
+    anchor = _find_scoring_section_start(rfp_text)
+    if anchor >= 0:
+        for i in range(1, 3):
+            start = anchor + i * MAX_RFP_CHARS
+            if start < len(rfp_text):
+                chunk = rfp_text[start: start + MAX_RFP_CHARS]
+                if chunk.strip():
+                    chunks.append(chunk)
     seen: set = set()
     unique: list = []
     for c in chunks:
@@ -1296,7 +1299,7 @@ async def stage2_extract_pqtq_rules(rfp_text: str) -> EvaluationRules:
         if key not in seen:
             seen.add(key)
             unique.append(c)
-    chunks = unique
+    chunks = unique[:5]
 
     all_cats: dict[str, dict] = {}
     pass_mark = 0.0

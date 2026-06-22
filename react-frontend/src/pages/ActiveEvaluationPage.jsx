@@ -327,12 +327,27 @@ export default function ActiveEvaluationPage() {
     score,
     riskLevel: report.disqualified ? 'High Risk' : report.passed ? 'Low Risk' : 'Medium Risk',
     riskClass: report.disqualified ? 'badge-high' : report.passed ? 'badge-low' : 'badge-medium',
-    categories: tqCats.map((cr, i) => ({
-      name: cr.category,
-      score: Math.round(cr.percent_achieved),
-      color: COLORS[i % COLORS.length],
-      qualification_type: cr.qualification_type || '',
-    })),
+    categories: (() => {
+      // Only show top-level categories in the summary card — exclude sub-criteria rows.
+      // Sub-criteria are identified by names starting with "Sub-Criterion", "Criterion N:",
+      // or being significantly smaller than the largest category (< 8% of max_score).
+      const totalMax = report.max_score || 1
+      const topLevel = tqCats.filter(cr => {
+        const n = cr.category.toLowerCase()
+        if (/^sub[-\s]?criterion/i.test(cr.category)) return false
+        if (/^criterion\s+\d/i.test(cr.category)) return false
+        if (cr.max_marks < totalMax * 0.08) return false
+        return true
+      })
+      // Fallback: if filter removes everything, show all tqCats (capped at 8)
+      const display = topLevel.length > 0 ? topLevel : tqCats
+      return display.slice(0, 8).map((cr, i) => ({
+        name: cr.category,
+        score: Math.round(cr.percent_achieved),
+        color: COLORS[i % COLORS.length],
+        qualification_type: cr.qualification_type || '',
+      }))
+    })(),
   }
 
   const allRawCriteria = report.category_results.flatMap(cr => cr.criteria)
