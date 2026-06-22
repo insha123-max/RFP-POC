@@ -1270,7 +1270,10 @@ async def run_full_evaluation(rfp_text: str, bid_text: str, prebid_text: str = "
     if not _rfp_has_explicit_marks(rfp_text):
         print("[Pipeline] No explicit scoring marks found in RFP text — raising NO_RULES_FOUND without LLM call")
         raise ValueError("NO_RULES_FOUND")
-    rules = await stage2_extract_rules(rfp_text)
+    rules, pq_criteria = await asyncio.gather(
+        stage2_extract_rules(rfp_text),
+        stage_extract_pq_criteria(rfp_text),
+    )
     if not rules.rules_found:
         raise ValueError("NO_RULES_FOUND")
     rfp_scoring_text = _extract_scoring_sections(rfp_text, MAX_RFP_CHARS)
