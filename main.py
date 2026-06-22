@@ -385,6 +385,8 @@ async def health():
 # Serve frontend — must come AFTER all API routes
 # ---------------------------------------------------------------------------
 
-_frontend = os.path.join(os.path.dirname(__file__), "frontend")
+_fe_react  = os.path.join(os.path.dirname(__file__), "frontend-react-dist")
+_fe_legacy = os.path.join(os.path.dirname(__file__), "frontend")
+_frontend  = _fe_react if os.path.isdir(_fe_react) else _fe_legacy
 if os.path.isdir(_frontend):
     app.mount("/", StaticFiles(directory=_frontend, html=True), name="frontend")

@@ -1265,15 +1265,11 @@ async def run_full_evaluation(rfp_text: str, bid_text: str, prebid_text: str = "
             + "\n\n=== PRE-BID CLARIFICATIONS (take precedence over original criteria above) ===\n\n"
             + prebid_text.strip()
         )
-    # Fast text-level guard: if the RFP has no explicit numeric marks at all,
-    # skip the expensive LLM stage2 call and go straight to custom-rules flow.
-    if not _rfp_has_explicit_marks(rfp_text):
-        print("[Pipeline] No explicit scoring marks found in RFP text — raising NO_RULES_FOUND without LLM call")
-        raise ValueError("NO_RULES_FOUND")
     rules = await stage2_extract_rules(rfp_text)
     if not rules.rules_found:
         raise ValueError("NO_RULES_FOUND")
     rfp_scoring_text = _extract_scoring_sections(rfp_text, MAX_RFP_CHARS)
+    pq_criteria = await stage_extract_pq_criteria(rfp_text)
     return await _run_pipeline(bid_text, rules, rfp_scoring_text, prebid_text=prebid_text, pq_criteria=pq_criteria)
 
 
