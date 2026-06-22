@@ -429,20 +429,33 @@ def _pq_evaluate_prompt(bid_text: str, pq_criteria: list) -> str:
 
 def _rfp_pqtq_prompt(chunk: str) -> str:
     return (
-        f"You are reading a tender/RFP document section. Extract Technical Qualification (TQ) scored criteria.\n\n"
+        f"You are reading a tender/RFP document section. Extract BOTH:\n"
+        f"  (1) Pre-Qualification (PQ) pass/fail eligibility conditions\n"
+        f"  (2) Technical Qualification (TQ) scored criteria with explicit numeric marks\n\n"
         f"{chunk}\n\n"
-        f"Extract ONLY Technical Qualification criteria that have EXPLICIT numeric marks/points/weightage.\n"
-        f"RULE 0: Set rules_found=true ONLY if you find explicit numeric marks for TQ criteria. "
-        f"Do NOT invent or guess marks.\n"
-        f"RULE 1: Each scoring category is independent — do not group under a single parent.\n"
-        f"RULE 2: subcriteria must be a FLAT list — no nesting.\n"
-        f"RULE 3: Preserve exact criterion names as they appear.\n"
-        f"RULE 4: Set qualification_type=\"TQ\" for all scored categories.\n\n"
+        f"=== RULE A — PQ ELIGIBILITY CRITERIA ===\n"
+        f"Sections titled 'Eligibility Criteria', 'Pre-Qualification', 'PQ Criteria', 'Mandatory Requirements'\n"
+        f"contain pass/fail conditions WITHOUT numeric marks. Extract EACH condition as a separate scoring_category with max_marks=1.\n"
+        f"Set qualification_type='PQ' for all PQ criteria.\n"
+        f"Example: category='Minimum Annual Turnover', max_marks=1, qualification_type='PQ',\n"
+        f"subcriteria=[{{criterion:'Annual turnover >= Rs 4.5 crore in last 3 years', max_marks:1}}]\n\n"
+        f"=== RULE B — TQ SCORED CRITERIA ===\n"
+        f"Extract rows from the scoring table with explicit numeric marks/points/weightage.\n"
+        f"Set qualification_type='TQ' for all scored criteria.\n"
+        f"Copy criterion names and marks EXACTLY as written.\n\n"
+        f"=== RULE C — TIERED SCORING ===\n"
+        f"When a TQ criterion has tiered/progressive marks, create ONE scoring_category with ONE subcriterion\n"
+        f"describing ALL tiers. Set max_marks = the highest tier value.\n\n"
+        f"=== RULE D — WHEN TO SET rules_found ===\n"
+        f"Set rules_found=true if scoring_categories is non-empty (any PQ or TQ criteria found).\n"
+        f"Set rules_found=false ONLY if no criteria of any kind were found in this chunk.\n"
+        f"Never invent marks. Never use eligibility thresholds as numeric scores.\n\n"
         f"Return ONLY JSON:\n"
-        f'{{"rules_found":true,"scoring_categories":[{{"category":"Category Name","max_marks":70,"weight_percent":70,"qualification_type":"TQ",'
-        f'"subcriteria":[{{"criterion":"Sub-Criterion Name","max_marks":20}}]}}],'
+        f'{{"rules_found":true,"scoring_categories":['
+        f'{{"category":"Name","max_marks":30,"weight_percent":30,"qualification_type":"TQ",'
+        f'"subcriteria":[{{"criterion":"<description>","max_marks":30}}]}}],'
         f'"threshold":{{"overall_pass_mark":70,"category_minimums":[]}}}}\n\n'
-        f"If no explicit numeric TQ marks exist:\n"
+        f"If no criteria of any kind found: "
         f'{{"rules_found":false,"scoring_categories":[],"threshold":{{"overall_pass_mark":0,"category_minimums":[]}}}}'
     )
 
@@ -455,12 +468,15 @@ def _bid_readiness_prompt(text: str) -> str:
         f"DOCUMENT:\n{text}\n\n"
         f"=== OUTPUT RULES ===\n\n"
         f"PART A — PQ_CRITERIA (mandatory eligibility, pass/fail, NO marks attached):\n"
-        f"  • Rewrite each requirement in plain English that a business executive understands.\n"
-        f"  • Write the criterion as a short, direct statement (≤20 words).\n"
-        f"  • Write the detail as a fuller explanation with specific numbers/documents required.\n"
-        f"  • One entry per requirement — do NOT merge multiple conditions.\n"
+        f"  • One entry per TOP-LEVEL requirement. Group all sub-conditions of a single requirement\n"
+        f"    into ONE entry — put the sub-conditions in the detail field, NOT as separate entries.\n"
+        f"  • Example: 'EMD/Bid Security' is ONE entry even if it has 5 sub-conditions about amount,\n"
+        f"    format, validity, and forfeiture. 'Blacklisting Declaration' is ONE entry even if it\n"
+        f"    mentions State, Central, and PSU blacklisting separately.\n"
+        f"  • Write criterion as a short label (≤12 words). Write detail as the full requirement.\n"
         f"  • Include: financial thresholds, EMD/bid security, registrations, experience minimums,\n"
-        f"    certifications, team/staff minimums, Make-in-India, blacklisting declarations.\n"
+        f"    certifications, team/staff, Make-in-India, blacklisting, office location.\n"
+        f"  • AIM for 10–25 total PQ entries. If you see more than 25, you are over-splitting.\n"
         f"  • Do NOT include scoring thresholds (like 'must score 70%') — those are TQ rules.\n\n"
         f"PART B — TQ_CRITERIA (scored criteria with explicit marks/points):\n"
         f"  • Extract only criteria with explicit numeric marks/scores/weightage.\n"
@@ -1431,36 +1447,45 @@ async def extract_bid_readiness_checklist(
     if additional_text.strip():
         combined = rfp_text + "\n\n=== ADDITIONAL DOCUMENT ===\n\n" + additional_text
 
-    keyword_text  = _extract_scoring_sections(combined, MAX_RFP_CHARS)
-    scoring_start = _find_scoring_section_start(combined)
-
-    chunks: list[str] = [keyword_text]
-    if scoring_start >= 0:
-        for i in range(1, 4):
-            chunk_start = scoring_start + i * MAX_RFP_CHARS
-            if chunk_start < len(combined):
-                chunks.append(combined[chunk_start: chunk_start + MAX_RFP_CHARS])
-    else:
-        for start in range(0, min(len(combined), MAX_RFP_CHARS * 4), MAX_RFP_CHARS):
-            chunks.append(combined[start: start + MAX_RFP_CHARS])
-
-    chunks = [c for c in chunks if c.strip()][:5]
+    # PQ/TQ eligibility sections are concentrated at the start of the document.
+    # Use 4 focused chunks: keyword-dense extraction + first 3 sequential windows.
+    # Unlimited sweep causes 10+ chunks with overlapping content → 90+ duplicate PQ entries.
+    chunks: list[str] = [_extract_scoring_sections(combined, MAX_RFP_CHARS)]
+    for start in range(0, min(len(combined), MAX_RFP_CHARS * 3), MAX_RFP_CHARS):
+        chunk = combined[start: start + MAX_RFP_CHARS]
+        if chunk.strip():
+            chunks.append(chunk)
+    seen_keys: set[str] = set()
+    unique_chunks: list[str] = []
+    for c in chunks:
+        key = c[:200]
+        if key not in seen_keys:
+            seen_keys.add(key)
+            unique_chunks.append(c)
+    chunks = unique_chunks
 
     seen_pq: set[str] = set()
     seen_tq: set[str] = set()
     raw_pq: list[dict] = []
     raw_tq: list[dict] = []
 
-    for chunk in chunks:
+    chunk_results = await asyncio.gather(
+        *[_call(_bid_readiness_prompt(c), max_tokens=2000) for c in chunks],
+        return_exceptions=True,
+    )
+    for raw in chunk_results:
         try:
-            data = _parse_object(await _call(_bid_readiness_prompt(chunk)))
+            if isinstance(raw, Exception):
+                print(f"[BidReadiness chunk] error: {raw}")
+                continue
+            data = _parse_object(raw)
         except Exception:
             continue
 
         for item in (data.get("pq_criteria") or []):
             if not isinstance(item, dict):
                 continue
-            key = str(item.get("criterion", "")).strip().lower()[:80]
+            key = str(item.get("criterion", "")).strip().lower()[:120]
             if key and key not in seen_pq:
                 seen_pq.add(key)
                 raw_pq.append(item)
@@ -1468,7 +1493,7 @@ async def extract_bid_readiness_checklist(
         for item in (data.get("tq_criteria") or []):
             if not isinstance(item, dict):
                 continue
-            key = str(item.get("criterion", "")).strip().lower()[:80]
+            key = str(item.get("criterion", "")).strip().lower()[:120]
             if key and key not in seen_tq:
                 seen_tq.add(key)
                 raw_tq.append(item)

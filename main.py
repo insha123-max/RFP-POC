@@ -91,7 +91,7 @@ async def evaluate(
         raise HTTPException(status_code=500, detail=str(exc))
     except RuntimeError as exc:
         msg = str(exc)
-        if "rate-limited" in msg or "All Groq" in msg:
+        if "rate-limited" in msg or "All Ollama" in msg:
             raise HTTPException(
                 status_code=503,
                 detail=(
@@ -229,7 +229,7 @@ async def evaluate_pqtq(
         raise HTTPException(status_code=500, detail=str(exc))
     except RuntimeError as exc:
         msg = str(exc)
-        if "rate-limited" in msg or "All Groq" in msg:
+        if "rate-limited" in msg or "All Ollama" in msg:
             raise HTTPException(
                 status_code=503,
                 detail=(
@@ -265,7 +265,7 @@ async def bid_readiness(
         return result
     except RuntimeError as exc:
         msg = str(exc)
-        if "rate-limited" in msg or "All Groq" in msg:
+        if "rate-limited" in msg or "All Ollama" in msg:
             raise HTTPException(
                 status_code=503,
                 detail="The AI service is temporarily unavailable. Please wait 1–2 minutes and try again.",
