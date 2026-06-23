@@ -29,6 +29,7 @@ class EvaluationRules(BaseModel):
     rules_found: bool = True
     scoring_categories: List[ScoringCategory] = []
     threshold: Threshold = Threshold(overall_pass_mark=0)
+    qcbs_methodology: bool = False  # True when RFP uses QCBS (Quality and Cost Based Selection)
 
 
 class CriterionEvaluation(BaseModel):

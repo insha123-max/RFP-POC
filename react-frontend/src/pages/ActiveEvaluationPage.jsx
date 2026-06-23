@@ -373,9 +373,9 @@ export default function ActiveEvaluationPage() {
 
   const allRawCriteria = report.category_results.flatMap(cr => cr.criteria)
 
-  // isPQTQ is true only when EVERY scoring category has an explicit PQ/TQ label —
-  // this only happens for reports produced by run_pqtq_evaluation.
-  // Standard evaluations (PNB, RITES, etc.) have qualification_type='' on categories.
+  // isPQTQ is true when every scoring category has an explicit PQ/TQ label.
+  // Both run_full_evaluation and run_pqtq_evaluation now use stage2_extract_pqtq_rules,
+  // so all evaluations produce qualified categories and isPQTQ=true by default.
   const isPQTQ = (report.rules?.scoring_categories?.length ?? 0) > 0 &&
     report.rules.scoring_categories.every(cat => cat.qualification_type === 'PQ' || cat.qualification_type === 'TQ')
 

@@ -476,20 +476,30 @@ def _rfp_pqtq_prompt(chunk: str) -> str:
         f"=== RULE A — PQ ELIGIBILITY CRITERIA ===\n"
         f"Sections titled 'Eligibility Criteria', 'Pre-Qualification', 'PQ Criteria', 'Mandatory Requirements'\n"
         f"contain pass/fail conditions WITHOUT numeric marks. Extract EACH condition as a separate scoring_category with max_marks=1.\n"
-        f"Set qualification_type='PQ' for all PQ criteria.\n"
+        f"Set qualification_type='PQ' for ALL eligibility conditions.\n"
         f"Example: category='Minimum Annual Turnover', max_marks=1, qualification_type='PQ',\n"
         f"subcriteria=[{{criterion:'Annual turnover >= Rs 4.5 crore in last 3 years', max_marks:1}}]\n\n"
         f"=== RULE B — TQ SCORED CRITERIA ===\n"
         f"Extract rows from the scoring table with explicit numeric marks/points/weightage.\n"
-        f"Set qualification_type='TQ' for all scored criteria.\n"
+        f"Set qualification_type='TQ' for ALL scored criteria.\n"
         f"Copy criterion names and marks EXACTLY as written.\n\n"
-        f"=== RULE C — TIERED SCORING ===\n"
-        f"When a TQ criterion has tiered/progressive marks, create ONE scoring_category with ONE subcriterion\n"
-        f"describing ALL tiers. Set max_marks = the highest tier value.\n\n"
-        f"=== RULE D — WHEN TO SET rules_found ===\n"
+        f"=== RULE C — HIERARCHICAL TABLES (categories with sub-criteria) ===\n"
+        f"If a scoring table has CATEGORY rows (e.g. 'Category A') and SUB-CRITERION rows within each:\n"
+        f"  - Create ONE scoring_category per CATEGORY\n"
+        f"  - Place each sub-criterion row inside that category's subcriteria[] array\n"
+        f"  - Do NOT create separate top-level scoring_categories for sub-criterion rows\n"
+        f"  Example: Category A (20 marks) with Sub-Criterion 1.a (10 marks) + Sub-Criterion 1.b (10 marks)\n"
+        f"  → ONE scoring_category: category='Category A', max_marks=20, qualification_type='TQ',\n"
+        f"    subcriteria=[{{criterion:'Sub-Criterion 1.a...', max_marks:10}}, {{criterion:'Sub-Criterion 1.b...', max_marks:10}}]\n\n"
+        f"=== RULE D — TIERED SCORING ===\n"
+        f"When a TQ criterion has tiered/progressive marks (e.g. '1-2 projects=10pts; 3-5=20pts; 5+=30pts'),\n"
+        f"create ONE scoring_category with ONE subcriterion describing ALL tiers in one string.\n"
+        f"Set max_marks = the highest tier value.\n"
+        f"TIERED = one criterion, multiple score levels. HIERARCHICAL (Rule C) = multiple separate sub-criteria.\n\n"
+        f"=== RULE E — WHEN TO SET rules_found ===\n"
         f"Set rules_found=true if scoring_categories is non-empty (any PQ or TQ criteria found).\n"
         f"Set rules_found=false ONLY if no criteria of any kind were found in this chunk.\n"
-        f"Never invent marks. Never use eligibility thresholds as numeric scores.\n\n"
+        f"Never invent marks. Never use eligibility thresholds (e.g. Rs 4.5 Cr) as numeric scores.\n\n"
         f"Return ONLY JSON:\n"
         f'{{"rules_found":true,"scoring_categories":['
         f'{{"category":"Name","max_marks":30,"weight_percent":30,"qualification_type":"TQ",'
@@ -943,6 +953,16 @@ async def stage3_parse_vendor_response(
             "ALWAYS set marks_awarded to the specific tiered value that matches the vendor's evidence."
         )
 
+        # PQ (eligibility) criteria are always binary pass/fail — override any other scoring branch.
+        if cat.qualification_type == "PQ":
+            scoring_instruction = (
+                f"PASS/FAIL SCORING — this is an eligibility/pre-qualification criterion (today is {today}):\n"
+                "- 'Met' (marks_awarded = max_marks): Bid clearly satisfies this requirement.\n"
+                "- 'Not Met' (marks_awarded = 0): Bid does not satisfy this requirement.\n"
+                "Binary decision only — no partial credit. For numeric thresholds (e.g. 'minimum 5 years', "
+                "'turnover >= Rs 4.5 Cr'), mark Met if the vendor meets or exceeds the stated minimum."
+            )
+
         # Append to every branch — LLMs (especially smaller ones) routinely invert
         # numeric comparisons. These explicit rules prevent the most common mistakes.
         scoring_instruction += (
@@ -1020,6 +1040,11 @@ Return ONLY a JSON array. For each criterion include marks_awarded as the ACTUAL
                     source_reference="Not found", compliance_status="Not Met",
                     confidence="Low", justification="Parsing failed for this category.",
                 ))
+        # Propagate qualification_type from the parent category so downstream
+        # code (pq_checks derivation, risk synthesis) can filter PQ vs TQ.
+        for ev in evals:
+            if not ev.qualification_type:
+                ev.qualification_type = cat.qualification_type
         return evals
 
     cat_eval_lists = await asyncio.gather(
@@ -1100,7 +1125,12 @@ def stage4_calculate_scores(
         pct           = round(marks_awarded / cat.max_marks * 100, 1) if cat.max_marks else 0.0
 
         min_pct, _src = cat_min_map.get(cat.category, (None, None))
-        cat_passed = pct >= min_pct if min_pct is not None else pct > 0
+        # PQ categories are binary gates — must be fully Met (any awarded marks = passed),
+        # but 0 marks means failed. For TQ categories, check against minimum_percent or >0.
+        if cat.qualification_type == "PQ":
+            cat_passed = marks_awarded > 0
+        else:
+            cat_passed = pct >= min_pct if min_pct is not None else pct > 0
         weighted   = round((marks_awarded / cat.max_marks) * cat.weight_percent, 2) if cat.max_marks else 0.0
 
         category_results.append(
@@ -1114,6 +1144,7 @@ def stage4_calculate_scores(
                 passed=cat_passed,
                 minimum_required=min_pct,
                 criteria=cat_criteria,
+                qualification_type=cat.qualification_type,
             )
         )
 
@@ -1126,27 +1157,48 @@ def stage4_calculate_scores(
 
 async def stage5_gap_analysis(
     criteria_evals: List[CriterionEvaluation],
+    category_results: List[CategoryResult] = [],
 ) -> List[RiskItem]:
-    summary = [
-        {"criterion": ce.criterion, "category": ce.category,
-         "compliance_status": ce.compliance_status,
-         "marks_awarded": ce.marks_awarded, "max_marks": ce.max_marks,
-         "vendor_claim": ce.vendor_claim}
+    # Category-level summary gives context even when individual criteria are sparse
+    cat_summary = [
+        {
+            "category": cr.category,
+            "marks_awarded": cr.marks_awarded,
+            "max_marks": cr.max_marks,
+            "percent_achieved": round(cr.percent_achieved, 1),
+            "passed": cr.passed,
+        }
+        for cr in category_results
+    ]
+
+    # Criterion-level detail for specific gaps
+    crit_summary = [
+        {
+            "criterion": ce.criterion,
+            "category": ce.category,
+            "compliance_status": ce.compliance_status,
+            "marks_awarded": ce.marks_awarded,
+            "max_marks": ce.max_marks,
+            "vendor_claim": ce.vendor_claim,
+        }
         for ce in criteria_evals
     ]
 
     prompt = f"""Based on the evaluation results below, identify the top risks and gaps in the vendor's bid.
 
-EVALUATION RESULTS:
-{json.dumps(summary, indent=2)}
+CATEGORY SCORES (Technical Qualification):
+{json.dumps(cat_summary, indent=2)}
+
+INDIVIDUAL CRITERIA RESULTS:
+{json.dumps(crit_summary, indent=2)}
 
 Focus on:
-1. Criteria completely missed (Not Met)
-2. Weak areas (scored below 50%)
-3. High-risk compliance gaps
-4. Any potential contradictions or red flags
+1. TQ categories scoring below 50% — identify WHY (missing evidence, wrong tier, etc.)
+2. Individual criteria marked Not Met — what was absent from the bid
+3. Categories with 0 marks — critical gaps
+4. Any contradictions or red flags in vendor claims
 
-Return ONLY a JSON array of up to 7 items:
+Return ONLY a JSON array of up to 8 items ordered by severity (High first):
 [
   {{
     "risk_area": "<short label>",
@@ -1155,7 +1207,7 @@ Return ONLY a JSON array of up to 7 items:
   }}
 ]"""
 
-    items = _parse_array(await _call(prompt, max_tokens=500))
+    items = _parse_array(await _call(prompt, max_tokens=800))
     if not isinstance(items, list):
         items = []
     risks = []
@@ -1166,6 +1218,28 @@ Return ONLY a JSON array of up to 7 items:
             desc = item.get("description", "")
             risks.append(RiskItem(risk_area=area, severity=sev, description=desc))
     return risks
+
+
+def _synthesize_pq_risks(risk_items: List[RiskItem], pq_checks: list) -> List[RiskItem]:
+    """Prepend PQ failures as High-severity risks so they always appear in gap analysis."""
+    failed = [chk for chk in pq_checks if chk.status == "Not Met"]
+    if not failed:
+        return risk_items
+    existing = {r.risk_area.lower() for r in risk_items}
+    pq_risks = []
+    for chk in failed:
+        # Skip if the LLM already identified this PQ gap
+        if any(chk.criterion.lower()[:35] in area for area in existing):
+            continue
+        pq_risks.append(RiskItem(
+            risk_area=f"PQ Failure: {chk.criterion}",
+            severity="High",
+            description=(
+                f"Pre-qualification requirement NOT MET — {chk.detail}. "
+                f"{chk.justification}"
+            ).strip(),
+        ))
+    return pq_risks + list(risk_items)  # PQ failures always shown first
 
 
 # ---------------------------------------------------------------------------
@@ -1297,20 +1371,42 @@ async def _run_pipeline(
     category_fail = any(
         not cr.passed for cr in category_results if cr.minimum_required is not None
     )
-    passed = not disqualified and not category_fail and total_score >= threshold
+    # Any PQ failure disqualifies the bid regardless of TQ score
+    pq_fail = any(not cr.passed for cr in category_results if cr.qualification_type == "PQ")
+    passed = not disqualified and not category_fail and not pq_fail and total_score >= threshold
 
-    is_perfect = (total_score >= max_score) or (
-        len(criteria_evals) > 0 and all(ce.marks_awarded >= ce.max_marks for ce in criteria_evals if ce.max_marks > 0)
-    )
+    is_perfect = max_score > 0 and total_score >= max_score
     async def _empty() -> list:
         return []
 
     risk_items, executive_summary, prebid_qa, pq_checks = await asyncio.gather(
-        _empty() if is_perfect else stage5_gap_analysis(criteria_evals),
+        _empty() if is_perfect else stage5_gap_analysis(criteria_evals, category_results),
         stage6_executive_summary(total_score, max_score, passed, category_results),
         stage_extract_prebid_qa(prebid_text) if prebid_text.strip() else _empty(),
         stage_evaluate_pq_criteria(bid_text, pq_criteria),
     )
+
+    # When PQ criteria are embedded in rules.scoring_categories (stage2_extract_pqtq_rules),
+    # stage_evaluate_pq_criteria receives an empty list and returns [].
+    # Derive pq_checks from the PQ CategoryResults produced by stage3/4 instead.
+    if not pq_checks:
+        pq_checks = [
+            PQCheck(
+                criterion=cr.category,
+                detail=ce.criterion,
+                status="Met" if ce.compliance_status == "Met" else "Not Met",
+                vendor_claim=ce.vendor_claim,
+                justification=ce.justification,
+            )
+            for cr in category_results
+            if cr.qualification_type == "PQ"
+            for ce in cr.criteria
+        ]
+
+    # Prepend any PQ failures as High-severity risks — gap analysis runs in parallel
+    # with PQ evaluation so it can't see PQ results; we merge them deterministically here.
+    risk_items = _synthesize_pq_risks(list(risk_items), pq_checks)
+
     prebid_applied = bool(prebid_text.strip())
 
     return EvaluationReport(
@@ -1358,14 +1454,15 @@ async def run_full_evaluation(rfp_text: str, bid_text: str, prebid_text: str = "
             + "\n\n=== PRE-BID CLARIFICATIONS (take precedence over original criteria above) ===\n\n"
             + prebid_text.strip()
         )
-    rules, pq_criteria = await asyncio.gather(
-        stage2_extract_rules(rfp_text),
-        stage_extract_pq_criteria(rfp_text),
-    )
+    # Use the unified PQTQ extractor so the same PQ+TQ criteria appear here as in
+    # the PQTQ tab — the two tabs must never contradict each other.
+    rules = await stage2_extract_pqtq_rules(rfp_text)
     if not rules.rules_found:
         raise ValueError("NO_RULES_FOUND")
     rfp_scoring_text = _extract_scoring_sections(rfp_text, MAX_RFP_CHARS)
-    return await _run_pipeline(bid_text, rules, rfp_scoring_text, prebid_text=prebid_text, pq_criteria=pq_criteria)
+    # pq_criteria=[] because PQ is already embedded in rules.scoring_categories
+    # (weight_percent=0 for PQ so they don't inflate the TQ score)
+    return await _run_pipeline(bid_text, rules, rfp_scoring_text, prebid_text=prebid_text, pq_criteria=[])
 
 
 async def run_evaluation_with_rules(bid_text: str, rules: EvaluationRules) -> EvaluationReport:
@@ -1498,9 +1595,14 @@ async def stage2_extract_pqtq_rules(rfp_text: str) -> EvaluationRules:
         if mm > 0:
             raw_cats.append((cat, mm, wp))
 
-    total_w = sum(w for _, _, w in raw_cats)
+    # PQ categories are pass/fail eligibility gates — they must NOT contribute to the
+    # weighted TQ score. Normalize TQ weights to sum to 100; PQ gets weight_percent=0.
+    pq_raw = [(c, m, w) for c, m, w in raw_cats if str(c.get("qualification_type", "")).upper() == "PQ"]
+    tq_raw = [(c, m, w) for c, m, w in raw_cats if str(c.get("qualification_type", "")).upper() != "PQ"]
+    total_w = sum(w for _, _, w in tq_raw)
     if total_w > 0:
-        raw_cats = [(c, m, round(w / total_w * 100, 2)) for c, m, w in raw_cats]
+        tq_raw = [(c, m, round(w / total_w * 100, 2)) for c, m, w in tq_raw]
+    raw_cats = tq_raw + [(c, m, 0.0) for c, m, w in pq_raw]
 
     categories = []
     for c, m, w in raw_cats:
@@ -1549,10 +1651,16 @@ async def stage2_extract_pqtq_rules(rfp_text: str) -> EvaluationRules:
         ],
     )
 
+    qcbs = bool(re.search(
+        r'\bqcbs\b|quality\s+and\s+cost\s+based\s+selection|quality\s+cost\s+based\s+selection',
+        rfp_text, re.IGNORECASE
+    ))
+
     return EvaluationRules(
         rules_found=any_explicit_rules and len(all_cats) > 0,
         scoring_categories=categories,
         threshold=threshold,
+        qcbs_methodology=qcbs,
     )
 
 
