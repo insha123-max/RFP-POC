@@ -336,11 +336,11 @@ export default function ActiveEvaluationPage() {
   const pqCats = report.category_results.filter(cr => cr.qualification_type === 'PQ')
   const tqCats = report.category_results.filter(cr => cr.qualification_type !== 'PQ')
 
-  // PQ checks shown as pass/fail in the vendor card — derived from PQ category results only
-  const pqChecks = pqCats.map(cr => ({
-    condition: cr.category,
-    met: cr.passed,
-    note: `${Math.round(cr.marks_awarded)}/${cr.max_marks} marks`,
+  // PQ checks shown as pass/fail in the vendor card and table — derived from individual PQ checks
+  const pqChecks = (report.pq_checks || []).map(chk => ({
+    condition: chk.criterion || chk.condition || '',
+    met: chk.status === 'Met' || chk.met === true,
+    note: chk.justification || chk.detail || chk.note || '',
   }))
 
   const vendor = {

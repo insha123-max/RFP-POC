@@ -1,4 +1,5 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { fetchBidReadiness } from '../api'
 import { useEvaluation } from '../context/EvaluationContext'
 import { PQTQReportModal } from '../components/PQTQReportModal'
@@ -170,7 +171,8 @@ function SummaryStrip({ pqItems, tqItems, checked }) {
 
 /* ══════════════════════════════════════════════════════════════════════════ */
 export default function BidReadinessPage() {
-  const { addPQTQCheck } = useEvaluation()
+  const navigate = useNavigate()
+  const { addPQTQCheck, setActivePQTQ } = useEvaluation()
   const [rfpFile,     setRfpFile]     = useState(null)
   const [addFile,     setAddFile]     = useState(null)
   const [loading,     setLoading]     = useState(false)
@@ -194,6 +196,20 @@ export default function BidReadinessPage() {
   // Combined arrays (AI-extracted + user-added)
   const allPQItems = result ? [...result.pq_items, ...customPQ] : []
   const allTQItems = result ? [...result.tq_items, ...customTQ] : []
+
+  // Synchronize activePQTQ with context
+  useEffect(() => {
+    if (result) {
+      setActivePQTQ({
+        rfpName: rfpFile?.name || 'Uploaded RFP',
+        pq_items: allPQItems,
+        tq_items: allTQItems,
+        checked: checked
+      })
+    } else {
+      setActivePQTQ(null)
+    }
+  }, [result, checked, customPQ, customTQ, rfpFile])
 
   const toggle = (id, val) => { setChecked(p => ({ ...p, [id]: val })); setScoreResult(null) }
   const reset  = () => {
@@ -683,6 +699,19 @@ export default function BidReadinessPage() {
               <div style={{ fontSize: '0.72rem', color: 'rgba(255,255,255,.65)', marginTop: 2 }}>{rfpFile?.name}</div>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <button
+                onClick={() => navigate('/evaluate')}
+                style={{
+                  padding: '6px 14px', borderRadius: 7, border: 'none',
+                  background: '#F26522', color: '#fff', fontSize: '0.8rem',
+                  fontWeight: 700, cursor: 'pointer', display: 'flex',
+                  alignItems: 'center', gap: 6, transition: 'all 0.15s'
+                }}
+                onMouseEnter={e => e.currentTarget.style.background = '#e05310'}
+                onMouseLeave={e => e.currentTarget.style.background = '#F26522'}
+              >
+                Evaluate Vendor Bid →
+              </button>
               <button
                 onClick={() => setShowReport(true)}
                 style={{ padding: '6px 14px', borderRadius: 7, border: '1px solid rgba(255,255,255,.4)', background: 'rgba(255,255,255,.15)', color: '#fff', fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}

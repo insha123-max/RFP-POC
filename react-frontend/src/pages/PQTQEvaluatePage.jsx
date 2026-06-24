@@ -550,8 +550,11 @@ export default function PQTQEvaluatePage() {
   const [showCustom, setShowCustom] = useState(true)
   const [customPQ, setCustomPQ]     = useState([mkPQItem()])
   const [customTQ, setCustomTQ]     = useState([mkTQCat()])
-  const { setReport, setRfpName, setBidName, addToHistory } = useEvaluation()
+  const [useReadinessCriteria, setUseReadinessCriteria] = useState(true)
+  const { setReport, setRfpName, setBidName, addToHistory, activePQTQ } = useEvaluation()
   const navigate = useNavigate()
+
+  const hasReadinessCriteria = !!(activePQTQ && (activePQTQ.pq_items?.length > 0 || activePQTQ.tq_items?.length > 0))
 
   const isCriteriaReady =
     customCriteria.categories.length > 0 &&
@@ -600,7 +603,11 @@ export default function PQTQEvaluatePage() {
     setError('')
     const timers = makeTimers()
     try {
-      const report = await runPQTQEvaluation(rfpFile, bidFiles, extraFiles)
+      // If using pre-validated criteria from Bid Readiness tab, pass them
+      const readinessRules = (hasReadinessCriteria && useReadinessCriteria)
+        ? { pq_items: activePQTQ.pq_items, tq_items: activePQTQ.tq_items }
+        : null
+      const report = await runPQTQEvaluation(rfpFile, bidFiles, extraFiles, readinessRules)
       timers.forEach(clearTimeout)
       await finishEvaluation(report, rfpFile.name)
     } catch (e) {
@@ -853,6 +860,62 @@ export default function PQTQEvaluatePage() {
         }}>
           <div style={{ fontWeight: 700, color: '#BE123C', marginBottom: 4 }}>Evaluation Failed</div>
           <div style={{ fontSize: '0.875rem', color: '#9F1239' }}>{error}</div>
+        </div>
+      )}
+
+      {/* Readiness criteria banner */}
+      {hasReadinessCriteria && (
+        <div style={{
+          background: useReadinessCriteria
+            ? 'linear-gradient(135deg, #F0FDF4 0%, #DCFCE7 100%)'
+            : '#F8FAFC',
+          border: `2px solid ${useReadinessCriteria ? '#22C55E' : '#E2E8F0'}`,
+          borderRadius: 12, padding: '1rem 1.25rem', marginBottom: '1.5rem',
+          display: 'flex', alignItems: 'center', gap: 14,
+          transition: 'all .25s',
+        }}>
+          <div style={{
+            width: 40, height: 40, borderRadius: 10, flexShrink: 0,
+            background: useReadinessCriteria ? '#22C55E' : '#E2E8F0',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            transition: 'all .25s',
+          }}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+              stroke={useReadinessCriteria ? '#fff' : '#94A3B8'} strokeWidth="2.5">
+              <path d="M9 11l3 3L22 4"/>
+              <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
+            </svg>
+          </div>
+          <div style={{ flex: 1 }}>
+            <div style={{
+              fontWeight: 700, fontSize: '0.9rem',
+              color: useReadinessCriteria ? '#15803D' : '#64748B',
+            }}>
+              {useReadinessCriteria
+                ? '✓ Using criteria from PQTQ Readiness check'
+                : 'Pre-validated criteria available'}
+            </div>
+            <div style={{ fontSize: '0.78rem', color: useReadinessCriteria ? '#16A34A' : '#94A3B8', marginTop: 2 }}>
+              {activePQTQ.pq_items?.length || 0} PQ + {activePQTQ.tq_items?.length || 0} TQ criteria
+              from "{activePQTQ.rfpName}"
+              {useReadinessCriteria
+                ? ' — ensures identical criteria between readiness check and evaluation'
+                : ' — click to use the same criteria'}
+            </div>
+          </div>
+          <button
+            onClick={() => setUseReadinessCriteria(v => !v)}
+            style={{
+              padding: '7px 16px', borderRadius: 8, fontWeight: 700, fontSize: '0.8rem',
+              border: 'none', cursor: 'pointer', flexShrink: 0,
+              background: useReadinessCriteria ? '#fff' : '#22C55E',
+              color: useReadinessCriteria ? '#6B7280' : '#fff',
+              boxShadow: useReadinessCriteria ? 'none' : '0 2px 8px rgba(34,197,94,.3)',
+              transition: 'all .2s',
+            }}
+          >
+            {useReadinessCriteria ? 'Use Fresh Extraction' : 'Use Readiness Criteria'}
+          </button>
         </div>
       )}
 

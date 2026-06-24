@@ -1,11 +1,14 @@
 const BASE = '/api'
 
-export async function runEvaluation(rfpFile, bidFiles, prebidFile = null) {
+export async function runEvaluation(rfpFile, bidFiles, prebidFile = null, readinessRules = null) {
   const form = new FormData()
   form.append('rfp_file', rfpFile)
   const files = Array.isArray(bidFiles) ? bidFiles : [bidFiles]
   files.forEach(f => form.append('bid_files', f))
   if (prebidFile) form.append('prebid_file', prebidFile)
+  if (readinessRules) {
+    form.append('readiness_rules_json', JSON.stringify(readinessRules))
+  }
   const res = await fetch(`${BASE}/evaluate`, { method: 'POST', body: form })
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }))
@@ -27,13 +30,16 @@ export async function runCustomEvaluation(bidFiles, criteriaData) {
   return res.json()
 }
 
-export async function runPQTQEvaluation(rfpFile, bidFiles, extraRfpFiles = []) {
+export async function runPQTQEvaluation(rfpFile, bidFiles, extraRfpFiles = [], readinessRules = null) {
   const form = new FormData()
   form.append('rfp_file', rfpFile)
   const files = Array.isArray(bidFiles) ? bidFiles : [bidFiles]
   files.forEach(f => form.append('bid_files', f))
   const extras = Array.isArray(extraRfpFiles) ? extraRfpFiles : [extraRfpFiles]
   extras.forEach(f => form.append('extra_rfp_files', f))
+  if (readinessRules) {
+    form.append('readiness_rules_json', JSON.stringify(readinessRules))
+  }
   const res = await fetch(`${BASE}/evaluate-pqtq`, { method: 'POST', body: form })
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }))

@@ -510,48 +510,6 @@ def _rfp_pqtq_prompt(chunk: str) -> str:
     )
 
 
-def _bid_readiness_prompt(text: str) -> str:
-    return (
-        f"You are a procurement expert helping a vendor understand an RFP/tender.\n\n"
-        f"Analyse the document below and extract ALL Pre-Qualification (PQ) eligibility "
-        f"conditions and Technical Qualification (TQ) scored criteria.\n\n"
-        f"DOCUMENT:\n{text}\n\n"
-        f"=== OUTPUT RULES ===\n\n"
-        f"PART A — PQ_CRITERIA (ELIGIBILITY CRITERIA ONLY — pass/fail thresholds a vendor must meet):\n"
-        f"\n"
-        f"  INCLUDE only criteria that test whether the vendor QUALIFIES:\n"
-        f"    ✓ Minimum annual turnover / financial capacity thresholds\n"
-        f"    ✓ Minimum years in business / operational experience\n"
-        f"    ✓ Minimum number of similar projects completed (with value/scale)\n"
-        f"    ✓ Required registrations, licences, or certifications (ISO, CMMI, GST, etc.)\n"
-        f"    ✓ Minimum team size or key personnel qualifications\n"
-        f"    ✓ Geographic / office presence requirements\n"
-        f"    ✓ Make-in-India / local content requirements\n"
-        f"\n"
-        f"  EXCLUDE procedural and compliance items — do NOT list these:\n"
-        f"    ✗ EMD / Earnest Money Deposit / Bid Security (submission instructions)\n"
-        f"    ✗ Declarations, affidavits, undertakings on stamp paper\n"
-        f"    ✗ Blacklisting / debarment / insolvency declarations (these are document submissions)\n"
-        f"    ✗ Power of Attorney / authorisation letters\n"
-        f"    ✗ Integrity Pact / NDA / non-disclosure agreements\n"
-        f"    ✗ Document checklist items (what to submit and when)\n"
-        f"    ✗ Bid validity period, performance security, contract signing procedures\n"
-        f"\n"
-        f"  • One entry per eligibility requirement. Write criterion as a short label (≤12 words).\n"
-        f"  • Write detail with the specific threshold or standard required.\n"
-        f"  • AIM for 5–15 PQ entries total. If you have more, you are including procedural items.\n\n"
-        f"PART B — TQ_CRITERIA (scored criteria with explicit marks/points):\n"
-        f"  • Extract only criteria with explicit numeric marks/scores/weightage.\n"
-        f"  • Rewrite each in plain English showing exactly what earns the marks.\n"
-        f"  • Include the score threshold tiers if they exist.\n"
-        f"  • Group by their original category name.\n\n"
-        f"Return ONLY valid JSON — no markdown, no commentary:\n"
-        f'{{"pq_criteria":['
-        f'{{"category":"Financial","criterion":"<plain English>","detail":"<explanation>"}}],'
-        f'"tq_criteria":['
-        f'{{"category":"GenAI Experience","criterion":"<plain English>","detail":"<explanation with score tiers>","max_score":20}}]}}'
-    )
-
 
 def _base_cat_key(key: str) -> str:
     """Return the base portion of a category key, stripping descriptive suffixes.
@@ -1016,7 +974,7 @@ Return ONLY a JSON array. For each criterion include marks_awarded as the ACTUAL
 [{{"criterion":"<name>","category":"<cat>","max_marks":<n>,"marks_awarded":<actual_tiered_marks>,"vendor_claim":"<quote or Not found>","source_reference":"<section or Not found>","compliance_status":"Met|Partial|Not Met","confidence":"High|Medium|Low","justification":"<one sentence explaining the tier awarded>"}}]"""
 
         try:
-            items = _parse_array(await _call(prompt))
+            items = _parse_array(await _call(prompt, max_tokens=3000))
             if not isinstance(items, list):
                 items = []
             for item in items:
@@ -1392,8 +1350,8 @@ async def _run_pipeline(
     if not pq_checks:
         pq_checks = [
             PQCheck(
-                criterion=cr.category,
-                detail=ce.criterion,
+                criterion=ce.criterion,
+                detail=ce.justification,
                 status="Met" if ce.compliance_status == "Met" else "Not Met",
                 vendor_claim=ce.vendor_claim,
                 justification=ce.justification,
@@ -1446,7 +1404,10 @@ def _rfp_has_explicit_marks(text: str) -> bool:
     return False
 
 
-async def run_full_evaluation(rfp_text: str, bid_text: str, prebid_text: str = "") -> EvaluationReport:
+async def run_full_evaluation(
+    rfp_text: str, bid_text: str, prebid_text: str = "",
+    readiness_rules: Optional[EvaluationRules] = None,
+) -> EvaluationReport:
     prebid_applied = bool(prebid_text.strip())
     if prebid_applied:
         rfp_text = (
@@ -1454,9 +1415,14 @@ async def run_full_evaluation(rfp_text: str, bid_text: str, prebid_text: str = "
             + "\n\n=== PRE-BID CLARIFICATIONS (take precedence over original criteria above) ===\n\n"
             + prebid_text.strip()
         )
-    # Use the unified PQTQ extractor so the same PQ+TQ criteria appear here as in
-    # the PQTQ tab — the two tabs must never contradict each other.
-    rules = await stage2_extract_pqtq_rules(rfp_text)
+    
+    if readiness_rules is not None:
+        rules = readiness_rules
+    else:
+        # Use the unified PQTQ extractor so the same PQ+TQ criteria appear here as in
+        # the PQTQ tab — the two tabs must never contradict each other.
+        rules = await stage2_extract_pqtq_rules(rfp_text)
+        
     if not rules.rules_found:
         raise ValueError("NO_RULES_FOUND")
     rfp_scoring_text = _extract_scoring_sections(rfp_text, MAX_RFP_CHARS)
@@ -1668,9 +1634,21 @@ _PQ_KEYWORDS = ["pre-qualif", "pre qualif", "prequalif", "eligib", "pq —", "pq
 _TQ_KEYWORDS = ["technical qual", "technical eval", "tq —", "tq-", " tq ", "(tq)", "annexure 18", "annex 18", "technical criteria"]
 
 
-async def run_pqtq_evaluation(rfp_text: str, bid_text: str) -> EvaluationReport:
-    """Evaluate bid scoped to Pre-Qualification / Technical Qualification criteria only."""
-    rules = await stage2_extract_pqtq_rules(rfp_text)
+async def run_pqtq_evaluation(
+    rfp_text: str, bid_text: str,
+    readiness_rules: Optional[EvaluationRules] = None,
+) -> EvaluationReport:
+    """Evaluate bid scoped to Pre-Qualification / Technical Qualification criteria only.
+
+    If *readiness_rules* is provided (converted from a prior Bid Readiness run),
+    those rules are used directly — bypassing a second LLM extraction call.
+    This ensures the criteria shown in the PQTQ Readiness tab are *identical*
+    to the criteria used in this evaluation.
+    """
+    if readiness_rules is not None:
+        rules = readiness_rules
+    else:
+        rules = await stage2_extract_pqtq_rules(rfp_text)
     if not rules.rules_found:
         raise ValueError("NO_RULES_FOUND")
 
@@ -1688,6 +1666,92 @@ async def run_pqtq_evaluation(rfp_text: str, bid_text: str) -> EvaluationReport:
     return await _run_pipeline(bid_text, rules, rfp_scoring_text)
 
 
+def convert_readiness_to_rules(
+    pq_items: list[dict],
+    tq_items: list[dict],
+) -> EvaluationRules:
+    """Convert Bid Readiness checklist items into EvaluationRules.
+
+    This is the bridge between the Readiness phase (``ChecklistItem`` flat
+    lists) and the Evaluation phase (``EvaluationRules`` with weighted
+    scoring categories).
+
+    PQ items become a single "Pre-Qualification Requirements" category
+    with weight_percent=0 so they are treated as pass/fail gates.
+
+    TQ items are grouped by their ``category`` field and assigned weights
+    proportional to their aggregate max_score.
+    """
+    from collections import OrderedDict
+
+    scoring_categories: list[ScoringCategory] = []
+
+    # ── PQ category (pass/fail, weight=0) ────────────────────────────────
+    pq_subcriteria = []
+    for item in pq_items:
+        criterion_text = item.get("criterion", "").strip()
+        if not criterion_text:
+            continue
+        pq_subcriteria.append(SubCriterion(
+            criterion=criterion_text,
+            max_marks=1.0,
+        ))
+    if pq_subcriteria:
+        scoring_categories.append(ScoringCategory(
+            category="Pre-Qualification Requirements",
+            max_marks=float(len(pq_subcriteria)),
+            weight_percent=0.0,
+            subcriteria=pq_subcriteria,
+            qualification_type="PQ",
+        ))
+
+    # ── TQ categories (weighted by marks) ────────────────────────────────
+    tq_by_cat: OrderedDict[str, list[dict]] = OrderedDict()
+    for item in tq_items:
+        criterion_text = item.get("criterion", "").strip()
+        if not criterion_text:
+            continue
+        cat_name = item.get("category", "Technical").strip() or "Technical"
+        tq_by_cat.setdefault(cat_name, []).append(item)
+
+    total_tq_marks = sum(
+        float(item.get("max_score", 0) or 0)
+        for items in tq_by_cat.values()
+        for item in items
+    )
+
+    for cat_name, items in tq_by_cat.items():
+        cat_marks = sum(float(item.get("max_score", 0) or 0) for item in items)
+        weight = (
+            round(cat_marks / total_tq_marks * 100, 2) if total_tq_marks > 0
+            else round(100 / max(len(tq_by_cat), 1), 2)
+        )
+        subcriteria = [
+            SubCriterion(
+                criterion=item.get("criterion", "").strip(),
+                max_marks=float(item.get("max_score", 10) or 10),
+            )
+            for item in items
+            if item.get("criterion", "").strip()
+        ]
+        if subcriteria:
+            scoring_categories.append(ScoringCategory(
+                category=cat_name,
+                max_marks=cat_marks if cat_marks > 0 else sum(s.max_marks for s in subcriteria),
+                weight_percent=weight,
+                subcriteria=subcriteria,
+                qualification_type="TQ",
+            ))
+
+    rules_found = len(scoring_categories) > 0
+
+    return EvaluationRules(
+        rules_found=rules_found,
+        scoring_categories=scoring_categories,
+        threshold=Threshold(overall_pass_mark=0),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Bid Readiness — extract PQ/TQ checklist in plain English (no bid needed)
 # ---------------------------------------------------------------------------
@@ -1700,92 +1764,72 @@ async def extract_bid_readiness_checklist(
     if additional_text.strip():
         combined = rfp_text + "\n\n=== ADDITIONAL DOCUMENT ===\n\n" + additional_text
 
-    # PQ/TQ eligibility sections are concentrated at the start of the document.
-    # Use 4 focused chunks: keyword-dense extraction + first 3 sequential windows.
-    # Unlimited sweep causes 10+ chunks with overlapping content → 90+ duplicate PQ entries.
-    chunks: list[str] = [_extract_scoring_sections(combined, MAX_RFP_CHARS)]
-    for start in range(0, min(len(combined), MAX_RFP_CHARS * 3), MAX_RFP_CHARS):
-        chunk = combined[start: start + MAX_RFP_CHARS]
-        if chunk.strip():
-            chunks.append(chunk)
-    seen_keys: set[str] = set()
-    unique_chunks: list[str] = []
-    for c in chunks:
-        key = c[:200]
-        if key not in seen_keys:
-            seen_keys.add(key)
-            unique_chunks.append(c)
-    chunks = unique_chunks
-
-    seen_pq: set[str] = set()
-    seen_tq: set[str] = set()
-    raw_pq: list[dict] = []
-    raw_tq: list[dict] = []
-
-    chunk_results = await asyncio.gather(
-        *[_call(_bid_readiness_prompt(c), max_tokens=2000) for c in chunks],
-        return_exceptions=True,
-    )
-    for raw in chunk_results:
-        try:
-            if isinstance(raw, Exception):
-                print(f"[BidReadiness chunk] error: {raw}")
-                continue
-            data = _parse_object(raw)
-        except Exception:
-            continue
-
-        for item in (data.get("pq_criteria") or []):
-            if not isinstance(item, dict):
-                continue
-            key = str(item.get("criterion", "")).strip().lower()[:120]
-            if key and key not in seen_pq:
-                seen_pq.add(key)
-                raw_pq.append(item)
-
-        for item in (data.get("tq_criteria") or []):
-            if not isinstance(item, dict):
-                continue
-            key = str(item.get("criterion", "")).strip().lower()[:120]
-            if key and key not in seen_tq:
-                seen_tq.add(key)
-                raw_tq.append(item)
+    # Use the unified PQTQ rules extractor to guarantee identical criteria extraction
+    # as the PQTQ Evaluation tab.
+    rules = await stage2_extract_pqtq_rules(combined)
 
     pq_items: List[ChecklistItem] = []
-    for i, item in enumerate(raw_pq):
-        criterion = str(item.get("criterion", "")).strip()
-        if not criterion:
-            continue
-        pq_items.append(ChecklistItem(
-            id=f"pq_{i}",
-            type="PQ",
-            category=str(item.get("category", "Eligibility")).strip(),
-            criterion=criterion,
-            detail=str(item.get("detail", "")).strip(),
-            max_score=0.0,
-            is_mandatory=True,
-        ))
-
     tq_items: List[ChecklistItem] = []
+    
+    pq_count = 0
+    tq_count = 0
     total_tq = 0.0
-    for i, item in enumerate(raw_tq):
-        criterion = str(item.get("criterion", "")).strip()
-        if not criterion:
-            continue
-        try:
-            score = float(item.get("max_score", 0) or 0)
-        except (TypeError, ValueError):
-            score = 0.0
-        total_tq += score
-        tq_items.append(ChecklistItem(
-            id=f"tq_{i}",
-            type="TQ",
-            category=str(item.get("category", "Technical")).strip(),
-            criterion=criterion,
-            detail=str(item.get("detail", "")).strip(),
-            max_score=score,
-            is_mandatory=False,
-        ))
+
+    for cat in rules.scoring_categories:
+        is_pq = (cat.qualification_type == "PQ" or cat.weight_percent == 0)
+        
+        if is_pq:
+            # If a PQ category has no subcriteria, add the category itself as a checklist item
+            if not cat.subcriteria:
+                pq_items.append(ChecklistItem(
+                    id=f"pq_{pq_count}",
+                    type="PQ",
+                    category=cat.category,
+                    criterion=cat.category,
+                    detail=cat.category,
+                    max_score=0.0,
+                    is_mandatory=True,
+                ))
+                pq_count += 1
+            else:
+                for sub in cat.subcriteria:
+                    pq_items.append(ChecklistItem(
+                        id=f"pq_{pq_count}",
+                        type="PQ",
+                        category=cat.category,
+                        criterion=sub.criterion,
+                        detail=sub.criterion,
+                        max_score=0.0,
+                        is_mandatory=True,
+                    ))
+                    pq_count += 1
+        else:
+            # TQ category
+            if not cat.subcriteria:
+                tq_items.append(ChecklistItem(
+                    id=f"tq_{tq_count}",
+                    type="TQ",
+                    category=cat.category,
+                    criterion=cat.category,
+                    detail=cat.category,
+                    max_score=cat.max_marks,
+                    is_mandatory=False,
+                ))
+                total_tq += cat.max_marks
+                tq_count += 1
+            else:
+                for sub in cat.subcriteria:
+                    tq_items.append(ChecklistItem(
+                        id=f"tq_{tq_count}",
+                        type="TQ",
+                        category=cat.category,
+                        criterion=sub.criterion,
+                        detail=sub.criterion,
+                        max_score=sub.max_marks,
+                        is_mandatory=False,
+                    ))
+                    total_tq += sub.max_marks
+                    tq_count += 1
 
     return BidReadinessResult(
         pq_items=pq_items,

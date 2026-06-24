@@ -13,10 +13,20 @@ export function EvaluationProvider({ children }) {
   const [bidName, setBidNameState]       = useState(() => loadLS('eval_bidName', ''))
   const [history, setHistory]            = useState(() => loadLS('eval_history', []))
   const [pqtqCheckHistory, setPQTQChecks] = useState(() => loadLS('pqtq_checks', []))
+  const [activePQTQ, setActivePQTQState] = useState(() => loadLS('active_pqtq', null))
 
   const setReport  = r => { setReportState(r);  localStorage.setItem('eval_report',  JSON.stringify(r)) }
   const setRfpName = n => { setRfpNameState(n); localStorage.setItem('eval_rfpName', JSON.stringify(n)) }
   const setBidName = n => { setBidNameState(n); localStorage.setItem('eval_bidName', JSON.stringify(n)) }
+
+  const setActivePQTQ = data => {
+    setActivePQTQState(data)
+    if (data) {
+      localStorage.setItem('active_pqtq', JSON.stringify(data))
+    } else {
+      localStorage.removeItem('active_pqtq')
+    }
+  }
 
   const addToHistory = entry => {
     setHistory(prev => {
@@ -78,6 +88,7 @@ export function EvaluationProvider({ children }) {
       report, setReport, rfpName, setRfpName, bidName, setBidName,
       history, addToHistory, deleteFromHistory, clearAllHistory, setCurrentEvaluation,
       pqtqCheckHistory, addPQTQCheck, deletePQTQCheck, clearAllPQTQChecks,
+      activePQTQ, setActivePQTQ,
     }}>
       {children}
     </Ctx.Provider>

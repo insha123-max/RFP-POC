@@ -23,6 +23,7 @@ from models import (
     Threshold,
 )
 from pipeline import (
+    convert_readiness_to_rules,
     extract_bid_readiness_checklist,
     run_evaluation_with_rules,
     run_full_evaluation,
@@ -51,6 +52,7 @@ async def evaluate(
     rfp_file: UploadFile = File(..., description="RFP / Tender document"),
     bid_files: List[UploadFile] = File(..., description="Vendor bid / response documents"),
     prebid_file: Optional[UploadFile] = File(None, description="Pre-Bid Q&A / clarification document (optional)"),
+    readiness_rules_json: Optional[str] = Form(default=None, description="Pre-validated criteria from Bid Readiness tab (JSON)"),
 ):
     rfp_bytes = await rfp_file.read()
     rfp_text, rfp_err = extract_text(rfp_file.filename or "rfp.pdf", rfp_bytes)
@@ -75,8 +77,24 @@ async def evaluate(
             raise HTTPException(status_code=400, detail=f"Additional document error: {pb_err}")
         prebid_text = pb_text
 
+    # If pre-validated rules from the Bid Readiness tab are provided, convert
+    # them into EvaluationRules so the same criteria are used for scoring.
+    readiness_rules = None
+    if readiness_rules_json:
+        try:
+            rd = json.loads(readiness_rules_json)
+            readiness_rules = convert_readiness_to_rules(
+                pq_items=rd.get("pq_items", []),
+                tq_items=rd.get("tq_items", []),
+            )
+        except Exception:
+            readiness_rules = None  # fallback to fresh extraction
+
     try:
-        report = await run_full_evaluation(rfp_text, combined_bid_text, prebid_text=prebid_text)
+        report = await run_full_evaluation(
+            rfp_text, combined_bid_text, prebid_text=prebid_text,
+            readiness_rules=readiness_rules,
+        )
         return report
     except ValueError as exc:
         if str(exc) == "NO_RULES_FOUND":
@@ -190,6 +208,7 @@ async def evaluate_pqtq(
     rfp_file: UploadFile = File(..., description="RFP / Tender document"),
     bid_files: List[UploadFile] = File(..., description="Vendor bid / response documents"),
     extra_rfp_files: List[UploadFile] = File(default=[], description="Additional rule/scoring documents (annexures, scoring matrices)"),
+    readiness_rules_json: Optional[str] = Form(default=None, description="Pre-validated criteria from Bid Readiness tab (JSON)"),
 ):
     rfp_bytes = await rfp_file.read()
     rfp_text, rfp_err = extract_text(rfp_file.filename or "rfp.pdf", rfp_bytes)
@@ -214,8 +233,21 @@ async def evaluate_pqtq(
         bid_parts.append(f"{header}\n{bid_text}".strip())
     combined_bid_text = "\n\n".join(bid_parts)
 
+    # If pre-validated rules from the Bid Readiness tab are provided, convert
+    # them into EvaluationRules so the same criteria are used for scoring.
+    readiness_rules = None
+    if readiness_rules_json:
+        try:
+            rd = json.loads(readiness_rules_json)
+            readiness_rules = convert_readiness_to_rules(
+                pq_items=rd.get("pq_items", []),
+                tq_items=rd.get("tq_items", []),
+            )
+        except Exception:
+            readiness_rules = None  # fallback to fresh extraction
+
     try:
-        report = await run_pqtq_evaluation(rfp_text, combined_bid_text)
+        report = await run_pqtq_evaluation(rfp_text, combined_bid_text, readiness_rules=readiness_rules)
         return report
     except ValueError as exc:
         if str(exc) == "NO_RULES_FOUND":

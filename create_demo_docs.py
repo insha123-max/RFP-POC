@@ -203,7 +203,7 @@ def create_rfp():
         "The decision of the RSEGA Evaluation Committee shall be final and binding."
     )
 
-    path = "/Users/inshakhan/Desktop/RFP-POC/bids/RSEGA_AI_CSP_RFP_2026.docx"
+    path = "RSEGA_AI_CSP_RFP_2026.docx"
     doc.save(path)
     print(f"Saved: {path}")
 
@@ -408,7 +408,7 @@ def create_pass_bid():
     ]:
         table_row(t, row)
 
-    path = "/Users/inshakhan/Desktop/RFP-POC/bids/GovTech_Systems_PASS_Bid.docx"
+    path = "GovTech_Systems_PASS_Bid.docx"
     doc.save(path)
     print(f"Saved: {path}")
 
@@ -536,7 +536,7 @@ def create_fail_bid():
         "given our competitive pricing and commitment."
     )
 
-    path = "/Users/inshakhan/Desktop/RFP-POC/bids/SoftByte_Innovations_FAIL_Bid.docx"
+    path = "SoftByte_Innovations_FAIL_Bid.docx"
     doc.save(path)
     print(f"Saved: {path}")
 
