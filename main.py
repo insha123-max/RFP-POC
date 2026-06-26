@@ -49,15 +49,24 @@ app.add_middleware(
 
 @app.post("/api/evaluate", response_model=EvaluationReport)
 async def evaluate(
-    rfp_file: UploadFile = File(..., description="RFP / Tender document"),
+    rfp_files: List[UploadFile] = File(..., description="RFP / Tender documents (first is main RFP; additional files are supporting docs such as scoring sheets)"),
     bid_files: List[UploadFile] = File(..., description="Vendor bid / response documents"),
-    prebid_file: Optional[UploadFile] = File(None, description="Pre-Bid Q&A / clarification document (optional)"),
     readiness_rules_json: Optional[str] = Form(default=None, description="Pre-validated criteria from Bid Readiness tab (JSON)"),
 ):
-    rfp_bytes = await rfp_file.read()
-    rfp_text, rfp_err = extract_text(rfp_file.filename or "rfp.pdf", rfp_bytes)
-    if rfp_err:
-        raise HTTPException(status_code=400, detail=f"RFP document error: {rfp_err}")
+    rfp_parts = []
+    for i, rfp_file in enumerate(rfp_files):
+        rfp_bytes = await rfp_file.read()
+        rfp_text_part, rfp_err = extract_text(rfp_file.filename or f"rfp_{i+1}.pdf", rfp_bytes)
+        if rfp_err:
+            raise HTTPException(status_code=400, detail=f"RFP document '{rfp_file.filename}' error: {rfp_err}")
+        if i == 0:
+            rfp_parts.append(rfp_text_part)
+        else:
+            rfp_parts.append(
+                f"\n\n=== SUPPORTING RFP DOCUMENT {i}: {rfp_file.filename} "
+                f"(evaluation rules / scoring criteria / amendments) ===\n\n{rfp_text_part}"
+            )
+    rfp_text = "".join(rfp_parts)
 
     bid_parts = []
     for i, bid_file in enumerate(bid_files):
@@ -68,14 +77,6 @@ async def evaluate(
         header = f"=== BID DOCUMENT {i+1}: {bid_file.filename} ===" if len(bid_files) > 1 else ""
         bid_parts.append(f"{header}\n{bid_text}".strip())
     combined_bid_text = "\n\n".join(bid_parts)
-
-    prebid_text = ""
-    if prebid_file is not None:
-        prebid_bytes = await prebid_file.read()
-        pb_text, pb_err = extract_text(prebid_file.filename or "prebid.pdf", prebid_bytes)
-        if pb_err:
-            raise HTTPException(status_code=400, detail=f"Additional document error: {pb_err}")
-        prebid_text = pb_text
 
     # If pre-validated rules from the Bid Readiness tab are provided, convert
     # them into EvaluationRules so the same criteria are used for scoring.
@@ -92,7 +93,7 @@ async def evaluate(
 
     try:
         report = await run_full_evaluation(
-            rfp_text, combined_bid_text, prebid_text=prebid_text,
+            rfp_text, combined_bid_text,
             readiness_rules=readiness_rules,
         )
         return report

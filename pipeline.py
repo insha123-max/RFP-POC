@@ -1412,7 +1412,7 @@ async def run_full_evaluation(
     if prebid_applied:
         rfp_text = (
             rfp_text
-            + "\n\n=== PRE-BID CLARIFICATIONS (take precedence over original criteria above) ===\n\n"
+            + "\n\n=== ADDITIONAL DOCUMENT (evaluation rules / scoring criteria / pre-bid clarifications) ===\n\n"
             + prebid_text.strip()
         )
     
@@ -1421,8 +1421,25 @@ async def run_full_evaluation(
     else:
         # Use the unified PQTQ extractor so the same PQ+TQ criteria appear here as in
         # the PQTQ tab — the two tabs must never contradict each other.
+        print(f"[run_full_evaluation] rfp_text length={len(rfp_text)}, first 200: {rfp_text[:200]!r}")
         rules = await stage2_extract_pqtq_rules(rfp_text)
-        
+        print(f"[run_full_evaluation] pass-1 rules_found={rules.rules_found}, cats={len(rules.scoring_categories)}")
+
+        # Fallback: if the combined text yielded no rules but the user attached
+        # supporting RFP documents (evaluation rule sheets, scoring matrices, etc.),
+        # run extraction again on just those documents. The main RFP may be large
+        # enough to push the supporting docs beyond the chunk window on the first pass.
+        if not rules.rules_found:
+            supp_match = re.search(
+                r'===\s*SUPPORTING RFP DOCUMENT\s+\d+', rfp_text, re.IGNORECASE
+            )
+            print(f"[run_full_evaluation] supp_match={supp_match}")
+            if supp_match:
+                supp_text = rfp_text[supp_match.start():]
+                print(f"[run_full_evaluation] supp_text length={len(supp_text)}, preview: {supp_text[:300]!r}")
+                rules = await stage2_extract_pqtq_rules(supp_text)
+                print(f"[run_full_evaluation] pass-2 rules_found={rules.rules_found}, cats={len(rules.scoring_categories)}")
+
     if not rules.rules_found:
         raise ValueError("NO_RULES_FOUND")
     rfp_scoring_text = _extract_scoring_sections(rfp_text, MAX_RFP_CHARS)
@@ -1455,6 +1472,13 @@ async def stage2_extract_pqtq_rules(rfp_text: str) -> EvaluationRules:
                 chunk = rfp_text[start: start + MAX_RFP_CHARS]
                 if chunk.strip():
                     chunks.append(chunk)
+    # Always include the tail of rfp_text so that additional documents appended at the end
+    # (e.g. an evaluation rule sheet uploaded via the "Additional Information" field) are
+    # covered even when the main RFP exceeds the 2×MAX_RFP_CHARS sequential window above.
+    tail_start = max(0, len(rfp_text) - MAX_RFP_CHARS)
+    tail_chunk = rfp_text[tail_start:]
+    if tail_chunk.strip():
+        chunks.append(tail_chunk)
     seen: set = set()
     unique: list = []
     for c in chunks:
@@ -1462,7 +1486,11 @@ async def stage2_extract_pqtq_rules(rfp_text: str) -> EvaluationRules:
         if key not in seen:
             seen.add(key)
             unique.append(c)
-    chunks = unique[:5]
+    chunks = unique[:6]
+
+    print(f"[stage2_extract_pqtq_rules] {len(chunks)} chunks — sizes: {[len(c) for c in chunks]}")
+    for idx, c in enumerate(chunks):
+        print(f"  chunk[{idx}] starts: {c[:120]!r}")
 
     all_cats: dict[str, dict] = {}
     pass_mark = 0.0
@@ -1480,6 +1508,7 @@ async def stage2_extract_pqtq_rules(rfp_text: str) -> EvaluationRules:
                 continue
             data = _parse_object(raw)
             chunk_has_rules = bool(data.get("rules_found", False))
+            print(f"[Stage2-PQTQ chunk] rules_found={chunk_has_rules}, cats={len(data.get('scoring_categories', []))}, raw_preview={str(raw)[:200]!r}")
             if chunk_has_rules:
                 any_explicit_rules = True
             else:

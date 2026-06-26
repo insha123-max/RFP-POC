@@ -551,9 +551,8 @@ function buildCriteriaPayload(customCriteria) {
 }
 
 export default function EvaluatePage() {
-  const [rfpFile, setRfpFile]     = useState(null)
+  const [rfpFiles, setRfpFiles]   = useState([])
   const [bidFiles, setBidFiles]   = useState([])
-  const [prebidFile, setPrebidFile] = useState(null)
   const [customCriteria, setCustomCriteria] = useState(DEFAULT_CUSTOM_CRITERIA)
   const [phase, setPhase]         = useState('upload')   // upload | progress | no_rules | error
   const [stepStates, setStepStates] = useState(STEPS.map(() => 'pending'))
@@ -610,13 +609,12 @@ export default function EvaluatePage() {
     setError('')
     const timers = makeTimers()
     try {
-      // If using pre-validated criteria from PQTQ tab, pass them
       const readinessRules = (hasReadinessCriteria && useReadinessCriteria)
         ? { pq_items: activePQTQ.pq_items, tq_items: activePQTQ.tq_items }
         : null
-      const report = await runEvaluation(rfpFile, bidFiles, prebidFile, readinessRules)
+      const report = await runEvaluation(rfpFiles, bidFiles, readinessRules)
       timers.forEach(clearTimeout)
-      await finishEvaluation(report, rfpFile.name)
+      await finishEvaluation(report, rfpFiles.map(f => f.name).join(', '))
     } catch (e) {
       timers.forEach(clearTimeout)
       if (e.message.includes('NO_RULES_FOUND')) {
@@ -636,7 +634,7 @@ export default function EvaluatePage() {
     try {
       const report = await runCustomEvaluation(bidFiles, buildCriteriaPayload(customCriteria))
       timers.forEach(clearTimeout)
-      await finishEvaluation(report, rfpFile?.name ?? 'Custom Criteria')
+      await finishEvaluation(report, rfpFiles.length > 0 ? rfpFiles.map(f => f.name).join(', ') : 'Custom Criteria')
     } catch (e) {
       timers.forEach(clearTimeout)
       setError(e.message)
@@ -729,7 +727,7 @@ export default function EvaluatePage() {
 
         {/* Uploaded files summary */}
         <div className="card" style={{ padding: '1rem 1.25rem', marginBottom: '1.5rem', display: 'flex', gap: '1.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
-          {rfpFile && (
+          {rfpFiles.length > 0 && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <div style={{ width: 28, height: 28, borderRadius: 6, background: '#FEF0E8', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#F26522" strokeWidth="2">
@@ -739,7 +737,7 @@ export default function EvaluatePage() {
               </div>
               <div>
                 <div style={{ fontSize: '0.72rem', color: '#94A3B8', fontWeight: 600 }}>RFP</div>
-                <div style={{ fontSize: '0.8rem', color: '#1E293B', fontWeight: 600 }}>{rfpFile.name}</div>
+                <div style={{ fontSize: '0.8rem', color: '#1E293B', fontWeight: 600 }}>{rfpFiles.map(f => f.name).join(', ')}</div>
               </div>
             </div>
           )}
@@ -885,10 +883,10 @@ export default function EvaluatePage() {
             </div>
 
             <div style={{ display: 'flex', gap: '1.5rem', marginBottom: '1.25rem', alignItems: 'stretch', minHeight: 200 }}>
-              <UploadZone
-                label="RFP / Tender Document"
-                sub="Contains evaluation criteria and scoring rules"
-                file={rfpFile} onFile={setRfpFile} accent="#F26522"
+              <MultiUploadZone
+                label="RFP / Tender Documents"
+                sub="Main RFP + any supporting docs (scoring sheets, amendments)"
+                files={rfpFiles} onFiles={setRfpFiles} accent="#F26522"
               />
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                 <div style={{
@@ -898,50 +896,17 @@ export default function EvaluatePage() {
                 }}>VS</div>
               </div>
               <MultiUploadZone
-                label="Vendor Bid Document"
+                label="Vendor Bid Documents"
                 sub="The vendor's response to be evaluated"
                 files={bidFiles} onFiles={setBidFiles} accent="#F5823A"
               />
-            </div>
-
-            {/* Optional Pre-Bid Q&A upload */}
-            <div style={{ borderTop: '1px dashed #E2E8F0', paddingTop: '1.25rem', marginBottom: '1.5rem' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: '0.75rem' }}>
-                <span style={{
-                  background: '#F1F5F9', borderRadius: 4, padding: '1px 7px',
-                  fontSize: '0.65rem', fontWeight: 800, color: '#94A3B8', letterSpacing: '0.04em',
-                }}>OPTIONAL</span>
-                <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#475569' }}>Additional Information</span>
-                <span style={{ fontSize: '0.72rem', color: '#94A3B8' }}>— Pre-Bid Q&amp;A or clarification documents</span>
-              </div>
-              <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-start' }}>
-                <div style={{ flex: 1 }}>
-                  <UploadZone
-                    label="Pre-Bid Q&A / Clarifications"
-                    sub="Official Q&A amendments to the RFP (PDF, DOCX)"
-                    file={prebidFile}
-                    onFile={setPrebidFile}
-                    accent="#F26522"
-                  />
-                </div>
-                {prebidFile && (
-                  <button
-                    onClick={() => setPrebidFile(null)}
-                    style={{
-                      marginTop: 6, padding: '4px 10px', border: '1px solid #E2E8F0',
-                      borderRadius: 6, background: '#fff', cursor: 'pointer',
-                      fontSize: '0.72rem', color: '#94A3B8', fontWeight: 600,
-                    }}
-                  >✕ Remove</button>
-                )}
-              </div>
             </div>
 
             <div style={{ borderTop: '1px solid #E2E8F0', paddingTop: '1.5rem', textAlign: 'center' }}>
               <button
                 className="btn btn-primary"
                 style={{ padding: '0.75rem 2.5rem', fontSize: '1rem' }}
-                disabled={!rfpFile || bidFiles.length === 0}
+                disabled={rfpFiles.length === 0 || bidFiles.length === 0}
                 onClick={handleEvaluate}
               >
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
@@ -961,37 +926,61 @@ export default function EvaluatePage() {
               Upload Status
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              {/* RFP row */}
-              <div style={{
-                display: 'flex', alignItems: 'center', gap: 12,
-                padding: '0.7rem 1rem', borderRadius: 8,
-                background: rfpFile ? '#F0FDF4' : '#F8FAFC',
-                border: `1px solid ${rfpFile ? '#BBF7D0' : '#E2E8F0'}`,
-              }}>
+              {/* RFP rows */}
+              {rfpFiles.length === 0 ? (
                 <div style={{
-                  width: 28, height: 28, borderRadius: 6,
-                  background: rfpFile ? '#DCFCE7' : '#E2E8F0',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                  display: 'flex', alignItems: 'center', gap: 12,
+                  padding: '0.7rem 1rem', borderRadius: 8,
+                  background: '#F8FAFC', border: '1px solid #E2E8F0',
                 }}>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
-                    stroke={rfpFile ? '#16A34A' : '#94A3B8'} strokeWidth="2">
-                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                    <polyline points="14 2 14 8 20 8"/>
-                  </svg>
-                </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: '0.8rem', fontWeight: 600, color: '#1E293B' }}>RFP / Tender Document</div>
-                  <div style={{ fontSize: '0.72rem', color: rfpFile ? '#16A34A' : '#94A3B8',
-                    whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {rfpFile ? rfpFile.name : 'No file selected'}
+                  <div style={{
+                    width: 28, height: 28, borderRadius: 6, background: '#E2E8F0',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                  }}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" strokeWidth="2">
+                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                      <polyline points="14 2 14 8 20 8"/>
+                    </svg>
                   </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: '0.8rem', fontWeight: 600, color: '#1E293B' }}>RFP / Tender Documents</div>
+                    <div style={{ fontSize: '0.72rem', color: '#94A3B8' }}>No files selected</div>
+                  </div>
+                  <span style={{
+                    fontSize: '0.68rem', fontWeight: 700, padding: '2px 8px', borderRadius: 999,
+                    background: '#F1F5F9', color: '#64748B',
+                  }}>Pending</span>
                 </div>
-                <span style={{
-                  fontSize: '0.68rem', fontWeight: 700, padding: '2px 8px', borderRadius: 999,
-                  background: rfpFile ? '#DCFCE7' : '#F1F5F9',
-                  color: rfpFile ? '#15803D' : '#64748B',
-                }}>{rfpFile ? 'Ready' : 'Pending'}</span>
-              </div>
+              ) : rfpFiles.map((f, i) => (
+                <div key={f.name} style={{
+                  display: 'flex', alignItems: 'center', gap: 12,
+                  padding: '0.7rem 1rem', borderRadius: 8,
+                  background: '#F0FDF4', border: '1px solid #BBF7D0',
+                }}>
+                  <div style={{
+                    width: 28, height: 28, borderRadius: 6, background: '#DCFCE7',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                  }}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#16A34A" strokeWidth="2">
+                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                      <polyline points="14 2 14 8 20 8"/>
+                    </svg>
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: '0.8rem', fontWeight: 600, color: '#1E293B' }}>
+                      {i === 0 ? 'RFP / Tender Document' : `Supporting RFP Document #${i}`}
+                    </div>
+                    <div style={{ fontSize: '0.72rem', color: '#16A34A',
+                      whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {f.name}
+                    </div>
+                  </div>
+                  <span style={{
+                    fontSize: '0.68rem', fontWeight: 700, padding: '2px 8px', borderRadius: 999,
+                    background: '#DCFCE7', color: '#15803D',
+                  }}>Ready</span>
+                </div>
+              ))}
 
               {/* Bid files rows */}
               {bidFiles.length === 0 ? (
@@ -1047,39 +1036,6 @@ export default function EvaluatePage() {
                 </div>
               ))}
 
-              {/* Pre-Bid Q&A row */}
-              <div style={{
-                display: 'flex', alignItems: 'center', gap: 12,
-                padding: '0.7rem 1rem', borderRadius: 8,
-                background: prebidFile ? '#F5F3FF' : '#F8FAFC',
-                border: `1px solid ${prebidFile ? '#DDD6FE' : '#E2E8F0'}`,
-              }}>
-                <div style={{
-                  width: 28, height: 28, borderRadius: 6,
-                  background: prebidFile ? '#EDE9FE' : '#E2E8F0',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-                }}>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
-                    stroke={prebidFile ? '#7C3AED' : '#94A3B8'} strokeWidth="2">
-                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-                  </svg>
-                </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: '0.8rem', fontWeight: 600, color: '#1E293B' }}>
-                    Pre-Bid Q&A
-                    {!prebidFile && <span style={{ marginLeft: 6, fontSize: '0.65rem', color: '#94A3B8', fontWeight: 700 }}>OPTIONAL</span>}
-                  </div>
-                  <div style={{ fontSize: '0.72rem', color: prebidFile ? '#7C3AED' : '#94A3B8',
-                    whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {prebidFile ? prebidFile.name : 'Not uploaded'}
-                  </div>
-                </div>
-                <span style={{
-                  fontSize: '0.68rem', fontWeight: 700, padding: '2px 8px', borderRadius: 999,
-                  background: prebidFile ? '#EDE9FE' : '#F1F5F9',
-                  color: prebidFile ? '#5B21B6' : '#94A3B8',
-                }}>{prebidFile ? 'Ready' : 'Skipped'}</span>
-              </div>
             </div>
           </div>
         </div>

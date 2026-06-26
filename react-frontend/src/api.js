@@ -1,11 +1,11 @@
 const BASE = '/api'
 
-export async function runEvaluation(rfpFile, bidFiles, prebidFile = null, readinessRules = null) {
+export async function runEvaluation(rfpFiles, bidFiles, readinessRules = null) {
   const form = new FormData()
-  form.append('rfp_file', rfpFile)
+  const rfps = Array.isArray(rfpFiles) ? rfpFiles : [rfpFiles]
+  rfps.forEach(f => form.append('rfp_files', f))
   const files = Array.isArray(bidFiles) ? bidFiles : [bidFiles]
   files.forEach(f => form.append('bid_files', f))
-  if (prebidFile) form.append('prebid_file', prebidFile)
   if (readinessRules) {
     form.append('readiness_rules_json', JSON.stringify(readinessRules))
   }
