@@ -90,57 +90,29 @@ def _get_semaphore() -> asyncio.Semaphore:
 
 
 async def _call(prompt: str, system: str = SYSTEM, max_tokens: int = 1200) -> str:
-    """Try each model in _MODELS; fall back to next on error.
+    """Call the pinned model (minimax-m2.7:cloud) with no fallback.
 
-    Limits concurrent requests to 3 via a semaphore so the cloud primary model
-    is not rate-limited when many chunks run in parallel.
+    Single model ensures consistent, comparable results across evaluations.
+    Raises immediately on any error instead of silently switching models.
     """
     async with _get_semaphore():
-        last_exc: Exception = RuntimeError("No models available")
-        for model in _MODELS:
-            try:
-                resp = await get_client().chat.completions.create(
-                    model=model,
-                    messages=[
-                        {"role": "system", "content": system},
-                        {"role": "user",   "content": prompt},
-                    ],
-                    temperature=0.1,
-                    max_tokens=max_tokens,
-                )
-                return resp.choices[0].message.content
-            except Exception as exc:
-                err = str(exc)
-                is_not_found = (
-                    "model" in err.lower() and ("not found" in err.lower() or "pull" in err.lower())
-                ) or "404" in err
-                is_timeout = "timeout" in err.lower() or "timed out" in err.lower()
-                is_rate_limited = "429" in err or "too many concurrent" in err.lower()
-
-                if is_not_found:
-                    print(f"[_call] {model} not available on Ollama, skipping. Error: {err[:160]}")
-                    last_exc = exc
-                    continue
-
-                if is_timeout:
-                    print(f"[_call] {model} timed out, trying next model. Error: {err[:160]}")
-                    last_exc = exc
-                    continue
-
-                if is_rate_limited:
-                    print(f"[_call] {model} rate-limited (429), trying next model immediately...")
-                    last_exc = exc
-                    continue
-
-                # Connection error or unexpected — try next model
-                print(f"[_call] {model} error: {err[:200]}")
-                last_exc = exc
-                continue
-
-        raise RuntimeError(
-            f"All Ollama models failed. Ensure the Ollama server at {OLLAMA_BASE_URL} is reachable "
-            f"and at least one of {_MODELS} is pulled. Last error: {last_exc}"
-        )
+        model = "minimax-m2.7:cloud"
+        try:
+            resp = await get_client().chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user",   "content": prompt},
+                ],
+                temperature=0.0,
+                max_tokens=max_tokens,
+            )
+            return resp.choices[0].message.content
+        except Exception as exc:
+            raise RuntimeError(
+                f"[_call] {model} failed: {exc}. "
+                f"Ensure Ollama at {OLLAMA_BASE_URL} is reachable and the model is available."
+            ) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -1409,18 +1381,22 @@ async def run_full_evaluation(
     readiness_rules: Optional[EvaluationRules] = None,
 ) -> EvaluationReport:
     prebid_applied = bool(prebid_text.strip())
+    # Always extract PQ/TQ criteria from the ORIGINAL rfp_text only.
+    # Appending a supported doc changes the anchor position inside stage2 chunking,
+    # causing PQ criteria to vary across runs with the same RFP — which is wrong.
+    rfp_for_scoring = rfp_text
     if prebid_applied:
-        rfp_text = (
+        rfp_for_scoring = (
             rfp_text
             + "\n\n=== ADDITIONAL DOCUMENT (evaluation rules / scoring criteria / pre-bid clarifications) ===\n\n"
             + prebid_text.strip()
         )
-    
+
     if readiness_rules is not None:
         rules = readiness_rules
     else:
-        # Use the unified PQTQ extractor so the same PQ+TQ criteria appear here as in
-        # the PQTQ tab — the two tabs must never contradict each other.
+        # Extract criteria from original RFP only — PQ must be identical for the
+        # same RFP regardless of which bid or additional doc is uploaded.
         print(f"[run_full_evaluation] rfp_text length={len(rfp_text)}, first 200: {rfp_text[:200]!r}")
         rules = await stage2_extract_pqtq_rules(rfp_text)
         print(f"[run_full_evaluation] pass-1 rules_found={rules.rules_found}, cats={len(rules.scoring_categories)}")
@@ -1442,7 +1418,7 @@ async def run_full_evaluation(
 
     if not rules.rules_found:
         raise ValueError("NO_RULES_FOUND")
-    rfp_scoring_text = _extract_scoring_sections(rfp_text, MAX_RFP_CHARS)
+    rfp_scoring_text = _extract_scoring_sections(rfp_for_scoring, MAX_RFP_CHARS)
     # pq_criteria=[] because PQ is already embedded in rules.scoring_categories
     # (weight_percent=0 for PQ so they don't inflate the TQ score)
     return await _run_pipeline(bid_text, rules, rfp_scoring_text, prebid_text=prebid_text, pq_criteria=[])
