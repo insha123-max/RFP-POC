@@ -350,17 +350,17 @@ def _extract_bid_sections(bid_text: str, criteria_list: list, max_chars: int) ->
 def _rfp_extract_prompt(chunk: str) -> str:
     return (
         f"You are reading a tender/RFP document section. Extract ONLY the SCORING MATRIX — the table "
-        f"that assigns numeric Max. Marks to evaluation criteria. Copy criterion names and marks EXACTLY "
-        f"as written. Do NOT rename, paraphrase, merge, split, or invent anything.\n\n"
+        f"that assigns numeric marks/score/points/weightage to evaluation criteria. Copy criterion names "
+        f"and marks EXACTLY as written. Do NOT rename, paraphrase, merge, split, or invent anything.\n\n"
         f"{chunk}\n\n"
         f"=== RULE A — IGNORE ELIGIBILITY / PRE-QUALIFICATION SECTIONS ===\n"
         f"Sections titled 'Eligibility Criteria', 'Pre-Qualification', 'PQ Criteria', 'Mandatory Requirements'\n"
         f"list pass/fail conditions WITHOUT marks. DO NOT extract these at all.\n"
         f"Example of what to IGNORE: 'Minimum turnover Rs 4.5 crore', 'At least 1 similar work of Rs 2 crore'\n\n"
         f"=== RULE B — EXTRACT FROM THE SCORING TABLE ONLY ===\n"
-        f"Indian govt RFPs have a scoring table with columns: S.No | Evaluation Criteria | Sub-Criteria | Max. Marks | Evaluation Basis\n"
-        f"Each ROW of this table becomes one scoring_category. Use the exact text from 'Evaluation Criteria' column as the category name.\n"
-        f"Use the value in the 'Max. Marks' column as max_marks. Do not modify these values.\n\n"
+        f"Scoring tables may use column headers like: Max. Marks | Marks | Score | Points | Weightage | Max Score\n"
+        f"Each ROW of this table becomes one scoring_category. Use the exact text from the criteria/description column as the category name.\n"
+        f"Use the numeric value in the marks/score/points column as max_marks. Do not modify these values.\n\n"
         f"=== RULE C — TIERED SCORING (MOST IMPORTANT) ===\n"
         f"When a criterion has tiered/progressive marks (e.g. '1-3 projects=10 marks, 3-5 projects=20 marks, ≥5 projects=30 marks'),\n"
         f"this is ONE scoring_category. Create EXACTLY ONE subcriterion that describes ALL tiers in its 'criterion' text.\n"
@@ -405,8 +405,8 @@ def _rfp_extract_prompt(chunk: str) -> str:
         f'{{"rules_found":true,"scoring_categories":[{{"category":"<exact name>","max_marks":55,"weight_percent":55,'
         f'"subcriteria":[{{"criterion":"<leaf sub-criterion name>","max_marks":20}},{{"criterion":"<next leaf>","max_marks":10}}]}}],'
         f'"threshold":{{"overall_pass_mark":70,"category_minimums":[]}}}}\n\n'
-        f"If no explicit scoring table with Max. Marks exists in this text: "
-        f'return exactly {{"rules_found":false,"scoring_categories":[],"threshold":{{"overall_pass_mark":0,"category_minimums":[]}}}}'
+        f"Set rules_found=false ONLY if scoring_categories is completely empty (no numeric criteria of any kind found).\n"
+        f'If empty: {{"rules_found":false,"scoring_categories":[],"threshold":{{"overall_pass_mark":0,"category_minimums":[]}}}}'
     )
 
 
@@ -573,7 +573,14 @@ async def stage2_extract_rules(rfp_text: str) -> EvaluationRules:
                 chunk = rfp_text[start: start + MAX_RFP_CHARS]
                 if chunk.strip():
                     chunks.append(chunk)
-    # Dedup by first 200 chars, hard-cap at 5 to keep total LLM calls to 1 batch
+    # Tail chunk: always include the last MAX_RFP_CHARS so that supporting documents
+    # appended after a long main RFP are covered even when they fall outside the
+    # sequential and anchor-based windows above.
+    tail_start = max(0, len(rfp_text) - MAX_RFP_CHARS)
+    tail_chunk = rfp_text[tail_start:]
+    if tail_chunk.strip():
+        chunks.append(tail_chunk)
+    # Dedup by first 200 chars, hard-cap at 6 to keep total LLM calls to 1 batch
     seen: set = set()
     unique: list = []
     for c in chunks:
@@ -581,7 +588,7 @@ async def stage2_extract_rules(rfp_text: str) -> EvaluationRules:
         if key not in seen:
             seen.add(key)
             unique.append(c)
-    chunks = unique[:5]
+    chunks = unique[:6]
 
     # Merge categories from all chunks
     all_cats: dict[str, dict] = {}
@@ -1395,16 +1402,30 @@ async def run_full_evaluation(
     if readiness_rules is not None:
         rules = readiness_rules
     else:
-        # Extract criteria from original RFP only — PQ must be identical for the
-        # same RFP regardless of which bid or additional doc is uploaded.
         print(f"[run_full_evaluation] rfp_text length={len(rfp_text)}, first 200: {rfp_text[:200]!r}")
-        rules = await stage2_extract_pqtq_rules(rfp_text)
+        # Run both extractors in parallel — PQTQ (PQ+TQ labels) and general (plain scoring table).
+        # The general extractor now also has the tail chunk and accepts marks/score/points/weightage,
+        # so it can find rules in supporting documents that use non-PQTQ column headers.
+        p1_pqtq, p1_general = await asyncio.gather(
+            stage2_extract_pqtq_rules(rfp_text),
+            stage2_extract_rules(rfp_text),
+            return_exceptions=True,
+        )
+        if not isinstance(p1_pqtq, Exception) and p1_pqtq.rules_found:
+            rules = p1_pqtq
+        elif not isinstance(p1_general, Exception) and p1_general.rules_found:
+            rules = p1_general
+        else:
+            rules = p1_pqtq if not isinstance(p1_pqtq, Exception) else EvaluationRules(rules_found=False)
         print(f"[run_full_evaluation] pass-1 rules_found={rules.rules_found}, cats={len(rules.scoring_categories)}")
 
         # Fallback: if the combined text yielded no rules but the user attached
         # supporting RFP documents (evaluation rule sheets, scoring matrices, etc.),
         # run extraction again on just those documents. The main RFP may be large
         # enough to push the supporting docs beyond the chunk window on the first pass.
+        # Also try the general extractor (stage2_extract_rules) in parallel because the
+        # supporting doc may use a plain scoring-table format that the PQTQ-scoped prompt
+        # does not recognise.
         if not rules.rules_found:
             supp_match = re.search(
                 r'===\s*SUPPORTING RFP DOCUMENT\s+\d+', rfp_text, re.IGNORECASE
@@ -1413,8 +1434,19 @@ async def run_full_evaluation(
             if supp_match:
                 supp_text = rfp_text[supp_match.start():]
                 print(f"[run_full_evaluation] supp_text length={len(supp_text)}, preview: {supp_text[:300]!r}")
-                rules = await stage2_extract_pqtq_rules(supp_text)
-                print(f"[run_full_evaluation] pass-2 rules_found={rules.rules_found}, cats={len(rules.scoring_categories)}")
+                general_result, pqtq_result = await asyncio.gather(
+                    stage2_extract_rules(supp_text),
+                    stage2_extract_pqtq_rules(supp_text),
+                    return_exceptions=True,
+                )
+                if not isinstance(general_result, Exception) and general_result.rules_found:
+                    rules = general_result
+                    print(f"[run_full_evaluation] pass-2 (general) rules_found=True, cats={len(rules.scoring_categories)}")
+                elif not isinstance(pqtq_result, Exception) and pqtq_result.rules_found:
+                    rules = pqtq_result
+                    print(f"[run_full_evaluation] pass-2 (pqtq) rules_found=True, cats={len(rules.scoring_categories)}")
+                else:
+                    print(f"[run_full_evaluation] pass-2 both extractors failed")
 
     if not rules.rules_found:
         raise ValueError("NO_RULES_FOUND")
