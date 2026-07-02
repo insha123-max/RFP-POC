@@ -766,7 +766,7 @@ export default function PQTQEvaluatePage() {
               </svg>
               Run PQTQ Evaluation
             </button>
-            <p style={{ marginTop: 10, fontSize: '0.78rem', color: '#94A3B8' }}>Powered by Groq LLaMA — results in 30–90 seconds</p>
+            <p style={{ marginTop: 10, fontSize: '0.78rem', color: '#94A3B8' }}>Powered by Groq LLaMA — results in 3–4 minutes</p>
           </div>
         </div>
       </div>
@@ -796,7 +796,7 @@ export default function PQTQEvaluatePage() {
               PQTQ Evaluation in Progress
             </h1>
             <p style={{ color: '#64748B', fontSize: '0.9rem', margin: 0 }}>
-              AI pipeline analyzing Pre-Qualification & Technical Qualification criteria — this takes 30–90 seconds
+              AI pipeline analyzing Pre-Qualification & Technical Qualification criteria — this takes 3–4 minutes
             </p>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 14, background: ACCENT_LIGHT, borderRadius: 12, padding: '0.75rem 1.25rem' }}>
@@ -974,7 +974,7 @@ export default function PQTQEvaluatePage() {
                 Run PQTQ Evaluation
               </button>
               <p style={{ marginTop: 10, fontSize: '0.78rem', color: '#94A3B8' }}>
-                Powered by Groq LLaMA — results in 30–90 seconds
+                Powered by Groq LLaMA — results in 3–4 minutes
               </p>
             </div>
           </div>

@@ -666,7 +666,7 @@ export default function EvaluatePage() {
               Evaluation in Progress
             </h1>
             <p style={{ color: '#64748B', fontSize: '0.9rem', margin: 0 }}>
-              AI pipeline analyzing your documents — this takes 30–90 seconds
+              AI pipeline analyzing your documents — this takes 3–4 minutes
             </p>
           </div>
 
@@ -793,7 +793,7 @@ export default function EvaluatePage() {
               Run Evaluation
             </button>
             <p style={{ marginTop: 10, fontSize: '0.78rem', color: '#94A3B8' }}>
-              Powered by Groq LLaMA — results in 30–90 seconds
+              Powered by Groq LLaMA — results in 3–4 minutes
             </p>
           </div>
         </div>
@@ -915,7 +915,7 @@ export default function EvaluatePage() {
                 Run Evaluation
               </button>
               <p style={{ marginTop: 10, fontSize: '0.78rem', color: '#94A3B8' }}>
-                Powered by Groq LLaMA — results in 30–90 seconds
+                Powered by Groq LLaMA — results in 3–4 minutes
               </p>
             </div>
           </div>
