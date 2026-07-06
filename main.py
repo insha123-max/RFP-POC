@@ -2,13 +2,21 @@
 
 import json
 import os
-from typing import List, Optional
+import uuid
+from typing import Any, List, Optional
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+from sqlalchemy import delete, select
+from sqlalchemy.orm import Session
+
+from db.auth import create_token, decode_token, hash_password, verify_password
+from db.database import Base, engine, get_db
+from db.models import Evaluation, User
 
 from document import extract_text
 from export import generate_word_report
@@ -32,7 +40,39 @@ from pipeline import (
 
 load_dotenv()
 
-app = FastAPI(title="RFP Evaluator", version="1.0.0")
+
+# ---------------------------------------------------------------------------
+# Pydantic schemas for auth / evaluations
+# ---------------------------------------------------------------------------
+
+class SignupRequest(BaseModel):
+    name: str
+    email: str
+    password: str
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+class SaveEvaluationRequest(BaseModel):
+    rfp_name: Optional[str] = None
+    bid_name: Optional[str] = None
+    evaluation_type: str = "General"
+    score: Optional[float] = None
+    passed: Optional[bool] = None
+    report: Optional[Any] = None
+    timestamp: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# App lifespan — create tables on startup
+# ---------------------------------------------------------------------------
+
+def _create_tables():
+    Base.metadata.create_all(bind=engine)
+
+
+app = FastAPI(title="RFP Evaluator", version="1.0.0", on_startup=[_create_tables])
 
 app.add_middleware(
     CORSMiddleware,
@@ -40,6 +80,145 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ---------------------------------------------------------------------------
+# Auth dependency
+# ---------------------------------------------------------------------------
+
+def get_current_user(
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+) -> User:
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    payload = decode_token(authorization.split(" ", 1)[1])
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    user = db.execute(select(User).where(User.id == uuid.UUID(payload["sub"]))).scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+    return user
+
+
+# ---------------------------------------------------------------------------
+# Auth endpoints
+# ---------------------------------------------------------------------------
+
+@app.post("/api/auth/signup")
+def signup(req: SignupRequest, db: Session = Depends(get_db)):
+    if not req.email.lower().endswith("@globallogic.com"):
+        raise HTTPException(status_code=400, detail="Only @globallogic.com email addresses are allowed.")
+    if len(req.password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters.")
+    if len(req.password) > 72:
+        raise HTTPException(status_code=400, detail="Password must be 72 characters or fewer.")
+    if db.execute(select(User).where(User.email == req.email.lower())).scalar_one_or_none():
+        raise HTTPException(status_code=409, detail="An account with this email already exists.")
+    user = User(name=req.name.strip(), email=req.email.lower(), password=hash_password(req.password))
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    token = create_token(str(user.id), user.email)
+    return {"token": token, "user": {"id": str(user.id), "name": user.name, "email": user.email}}
+
+
+@app.post("/api/auth/login")
+def login(req: LoginRequest, db: Session = Depends(get_db)):
+    if not req.email.lower().endswith("@globallogic.com"):
+        raise HTTPException(status_code=400, detail="Only @globallogic.com email addresses are allowed.")
+    user = db.execute(select(User).where(User.email == req.email.lower())).scalar_one_or_none()
+    if not user or not verify_password(req.password, user.password):
+        raise HTTPException(status_code=401, detail="Incorrect email or password.")
+    token = create_token(str(user.id), user.email)
+    return {"token": token, "user": {"id": str(user.id), "name": user.name, "email": user.email}}
+
+
+@app.get("/api/auth/me")
+def me(current_user: User = Depends(get_current_user)):
+    return {"id": str(current_user.id), "name": current_user.name, "email": current_user.email}
+
+
+# ---------------------------------------------------------------------------
+# Evaluation history endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/api/evaluations")
+def list_evaluations(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    rows = db.execute(
+        select(Evaluation)
+        .where(Evaluation.user_id == current_user.id)
+        .order_by(Evaluation.created_at.desc())
+    ).scalars().all()
+    return [
+        {
+            "id": str(r.id),
+            "rfp_name": r.rfp_name,
+            "bid_name": r.bid_name,
+            "evaluation_type": r.evaluation_type,
+            "score": r.score,
+            "passed": r.passed,
+            "report": r.report,
+            "timestamp": r.created_at.isoformat(),
+        }
+        for r in rows
+    ]
+
+
+@app.post("/api/evaluations", status_code=201)
+def save_evaluation(
+    req: SaveEvaluationRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    ev = Evaluation(
+        user_id=current_user.id,
+        rfp_name=req.rfp_name,
+        bid_name=req.bid_name,
+        evaluation_type=req.evaluation_type,
+        score=req.score,
+        passed=req.passed,
+        report=req.report,
+    )
+    db.add(ev)
+    db.commit()
+    db.refresh(ev)
+    return {
+        "id": str(ev.id),
+        "rfp_name": ev.rfp_name,
+        "bid_name": ev.bid_name,
+        "evaluation_type": ev.evaluation_type,
+        "score": ev.score,
+        "passed": ev.passed,
+        "timestamp": ev.created_at.isoformat(),
+    }
+
+
+@app.delete("/api/evaluations/{evaluation_id}", status_code=204)
+def delete_evaluation(
+    evaluation_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    ev = db.execute(
+        select(Evaluation).where(
+            Evaluation.id == uuid.UUID(evaluation_id),
+            Evaluation.user_id == current_user.id,
+        )
+    ).scalar_one_or_none()
+    if not ev:
+        raise HTTPException(status_code=404, detail="Evaluation not found.")
+    db.delete(ev)
+    db.commit()
+
+
+@app.delete("/api/evaluations", status_code=204)
+def clear_all_evaluations(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    db.execute(delete(Evaluation).where(Evaluation.user_id == current_user.id))
+    db.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -52,6 +231,8 @@ async def evaluate(
     rfp_files: List[UploadFile] = File(..., description="RFP / Tender documents (first is main RFP; additional files are supporting docs such as scoring sheets)"),
     bid_files: List[UploadFile] = File(..., description="Vendor bid / response documents"),
     readiness_rules_json: Optional[str] = Form(default=None, description="Pre-validated criteria from Bid Readiness tab (JSON)"),
+    custom_threshold: Optional[float] = Form(default=None, description="Override pass threshold % extracted from RFP (e.g. 70 means 70%)"),
+    _current_user: User = Depends(get_current_user),
 ):
     rfp_parts = []
     for i, rfp_file in enumerate(rfp_files):
@@ -91,10 +272,14 @@ async def evaluate(
         except Exception:
             readiness_rules = None  # fallback to fresh extraction
 
+    if custom_threshold is not None and custom_threshold < 50:
+        raise HTTPException(status_code=422, detail="Custom threshold cannot be less than 50%.")
+
     try:
         report = await run_full_evaluation(
             rfp_text, combined_bid_text,
             readiness_rules=readiness_rules,
+            custom_threshold=custom_threshold,
         )
         return report
     except ValueError as exc:
@@ -210,6 +395,8 @@ async def evaluate_pqtq(
     bid_files: List[UploadFile] = File(..., description="Vendor bid / response documents"),
     extra_rfp_files: List[UploadFile] = File(default=[], description="Additional rule/scoring documents (annexures, scoring matrices)"),
     readiness_rules_json: Optional[str] = Form(default=None, description="Pre-validated criteria from Bid Readiness tab (JSON)"),
+    custom_threshold: Optional[float] = Form(default=None, description="Override pass threshold % extracted from RFP (e.g. 70 means 70%)"),
+    _current_user: User = Depends(get_current_user),
 ):
     rfp_bytes = await rfp_file.read()
     rfp_text, rfp_err = extract_text(rfp_file.filename or "rfp.pdf", rfp_bytes)
@@ -247,8 +434,39 @@ async def evaluate_pqtq(
         except Exception:
             readiness_rules = None  # fallback to fresh extraction
 
+    if custom_threshold is not None and custom_threshold < 50:
+        raise HTTPException(status_code=422, detail="Custom threshold cannot be less than 50%.")
+
+    import asyncio
+    from db.database import SessionLocal
+    from db.models import Evaluation
+
+    async def _evaluate_and_save():
+        report = await run_pqtq_evaluation(
+            rfp_text, combined_bid_text, 
+            readiness_rules=readiness_rules, custom_threshold=custom_threshold
+        )
+        db = SessionLocal()
+        try:
+            ev = Evaluation(
+                user_id=_current_user.id,
+                rfp_name=rfp_file.filename or "rfp.pdf",
+                bid_name=bid_files[0].filename if bid_files else "bid.pdf",
+                evaluation_type="PQTQ",
+                score=report.total_score,
+                passed=report.passed,
+                report=report.model_dump()
+            )
+            db.add(ev)
+            db.commit()
+        except Exception as e:
+            print("Auto-save failed:", e)
+        finally:
+            db.close()
+        return report
+
     try:
-        report = await run_pqtq_evaluation(rfp_text, combined_bid_text, readiness_rules=readiness_rules)
+        report = await asyncio.shield(_evaluate_and_save())
         return report
     except ValueError as exc:
         if str(exc) == "NO_RULES_FOUND":

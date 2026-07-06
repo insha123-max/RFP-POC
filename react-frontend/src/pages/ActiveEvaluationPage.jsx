@@ -199,12 +199,30 @@ function RequirementsTable({ criteria, pqChecks = [], title = 'Requirements Asse
       </div>
       <div style={{ overflowX: 'auto' }}>
         <table className="tbl">
+          <colgroup>
+            {qualType === 'PQ' ? (
+              <>
+                <col style={{ width: '52%' }} />
+                <col style={{ width: '22%' }} />
+                <col style={{ width: '15%' }} />
+                <col style={{ width: '11%' }} />
+              </>
+            ) : (
+              <>
+                <col style={{ width: '42%' }} />
+                <col style={{ width: '16%' }} />
+                <col style={{ width: '13%' }} />
+                <col style={{ width: '16%' }} />
+                <col style={{ width: '13%' }} />
+              </>
+            )}
+          </colgroup>
           <thead>
             <tr>
-              <th style={{ width: '42%' }}>Requirement</th>
+              <th>Requirement</th>
               <th>Category</th>
               <th>Status</th>
-              <th>Logic</th>
+              {qualType !== 'PQ' && <th>Logic</th>}
               <th>Score</th>
             </tr>
           </thead>
@@ -212,18 +230,19 @@ function RequirementsTable({ criteria, pqChecks = [], title = 'Requirements Asse
             {filtered.map((c, i) => {
               const prevIsPQ = i > 0 && filtered[i - 1].isPQ
               const showTQDivider = !c.isPQ && prevIsPQ
+              const colSpanCount = qualType === 'PQ' ? 4 : 5
               return (
               <React.Fragment key={i}>
                 {showTQDivider && (
                   <tr key={`div-${i}`}>
-                    <td colSpan={5} style={{ padding: '4px 12px', background: '#EDE9FE', fontSize: '0.68rem', fontWeight: 800, color: '#5B21B6', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+                    <td colSpan={colSpanCount} style={{ padding: '4px 12px', background: '#EDE9FE', fontSize: '0.68rem', fontWeight: 800, color: '#5B21B6', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
                       {qualBadge('TQ')} Technical Qualification Criteria
                     </td>
                   </tr>
                 )}
                 {i === 0 && c.isPQ && (
                   <tr key={`pq-hdr-${i}`}>
-                    <td colSpan={5} style={{ padding: '4px 12px', background: '#FEF3C7', fontSize: '0.68rem', fontWeight: 800, color: '#92400E', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+                    <td colSpan={colSpanCount} style={{ padding: '4px 12px', background: '#FEF3C7', fontSize: '0.68rem', fontWeight: 800, color: '#92400E', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
                       {qualBadge('PQ')} Pre-Qualification / Eligibility Criteria
                     </td>
                   </tr>
@@ -240,7 +259,7 @@ function RequirementsTable({ criteria, pqChecks = [], title = 'Requirements Asse
                 </td>
                 <td style={{ fontSize: '0.78rem', color: '#6B7280' }}>{c.category}</td>
                 <td>{statusBadge(c.v1)}</td>
-                <td>{logicBadge(c.threshold_logic)}</td>
+                {qualType !== 'PQ' && <td>{logicBadge(c.threshold_logic)}</td>}
                 <td style={{ fontWeight: 700, fontSize: '0.85rem', color: c.isPQ ? (c.met ? '#15803D' : '#DC2626') : '#4F46E5' }}>
                   {c.isPQ ? (c.met ? 'Pass' : 'Fail') : `${c.marks_awarded}/${c.max_marks}`}
                 </td>

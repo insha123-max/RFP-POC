@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { useLocation, NavLink, useNavigate } from 'react-router-dom'
 import { useEvaluation } from '../context/EvaluationContext'
+import { useAuth } from '../context/AuthContext'
 
 const PAGE_LABELS = {
   '/':                   'Dashboard',
@@ -33,7 +34,10 @@ function IconBtn({ children, title, badge, onClick }) {
 export default function TopBar({ sidebarOpen }) {
   const { pathname } = useLocation()
   const navigate = useNavigate()
-  const { history, setCurrentEvaluation } = useEvaluation()
+  const { history, setCurrentEvaluation, evalRunning, evalType } = useEvaluation()
+  const { user, logout } = useAuth()
+  const [showUserMenu, setShowUserMenu] = useState(false)
+  const userMenuRef = useRef(null)
   const label = PAGE_LABELS[pathname] ?? 'BidEval AI'
   const [searchVal, setSearchVal] = useState('')
   const [showDrop, setShowDrop] = useState(false)
@@ -61,6 +65,7 @@ export default function TopBar({ sidebarOpen }) {
     const handler = e => {
       if (searchRef.current && !searchRef.current.contains(e.target)) setShowDrop(false)
       if (notifRef.current && !notifRef.current.contains(e.target)) setShowNotif(false)
+      if (userMenuRef.current && !userMenuRef.current.contains(e.target)) setShowUserMenu(false)
     }
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
@@ -156,6 +161,21 @@ export default function TopBar({ sidebarOpen }) {
               </div>
             )}
           </div>
+
+          {/* Evaluation running indicator */}
+          {evalRunning && (
+            <div title={`${evalType === 'pqtq' ? 'PQTQ' : 'General'} evaluation running…`} style={{
+              display: 'flex', alignItems: 'center', gap: 6,
+              background: '#EEF2FF', border: '1px solid #C7D2FE',
+              borderRadius: 20, padding: '4px 12px',
+              fontSize: '0.75rem', fontWeight: 600, color: '#4F46E5',
+            }}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#4F46E5" strokeWidth="2.5" strokeLinecap="round" style={{ animation: 'spin 1s linear infinite' }}>
+                <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
+              </svg>
+              {evalType === 'pqtq' ? 'PQTQ' : 'Evaluating'}…
+            </div>
+          )}
 
           <div className="topbar-divider" />
 
@@ -257,15 +277,91 @@ export default function TopBar({ sidebarOpen }) {
 
           <div className="topbar-divider" />
 
-          {/* Login */}
-          <button className="topbar-btn-login" onClick={() => {}}>
-            Log In
-          </button>
+          {/* User menu */}
+          {user ? (
+            <div ref={userMenuRef} style={{ position: 'relative' }}>
+              <button
+                onClick={() => setShowUserMenu(v => !v)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 8,
+                  background: 'none', border: '1.5px solid #E2E8F0',
+                  borderRadius: 24, padding: '4px 10px 4px 4px',
+                  cursor: 'pointer', transition: 'border-color .15s',
+                }}
+                onMouseEnter={e => e.currentTarget.style.borderColor = '#CBD5E1'}
+                onMouseLeave={e => e.currentTarget.style.borderColor = '#E2E8F0'}
+              >
+                {user.picture ? (
+                  <img src={user.picture} alt={user.name} style={{ width: 28, height: 28, borderRadius: '50%', objectFit: 'cover' }} referrerPolicy="no-referrer" />
+                ) : (
+                  <div style={{ width: 28, height: 28, borderRadius: '50%', background: '#3B6FE8', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.75rem', fontWeight: 700 }}>
+                    {user.name?.charAt(0).toUpperCase()}
+                  </div>
+                )}
+                <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#374151', maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {user.name?.split(' ')[0]}
+                </span>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" strokeWidth="2.5" strokeLinecap="round">
+                  <polyline points="6 9 12 15 18 9"/>
+                </svg>
+              </button>
 
-          {/* Sign Up */}
-          <button className="topbar-btn-signup" onClick={() => navigate('/evaluate')}>
-            Get Started
-          </button>
+              {showUserMenu && (
+                <div style={{
+                  position: 'absolute', top: 'calc(100% + 8px)', right: 0,
+                  background: '#fff', borderRadius: 12, border: '1px solid #E5E7EB',
+                  boxShadow: '0 8px 24px rgba(0,0,0,.1)', zIndex: 9999,
+                  minWidth: 240, overflow: 'hidden',
+                }}>
+                  {/* User info header */}
+                  <div style={{ padding: '14px 16px', borderBottom: '1px solid #F3F4F6' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      {user.picture ? (
+                        <img src={user.picture} alt={user.name} style={{ width: 38, height: 38, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} referrerPolicy="no-referrer" />
+                      ) : (
+                        <div style={{ width: 38, height: 38, borderRadius: '50%', background: '#3B6FE8', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1rem', fontWeight: 700, flexShrink: 0 }}>
+                          {user.name?.charAt(0).toUpperCase()}
+                        </div>
+                      )}
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontWeight: 700, fontSize: '0.875rem', color: '#111827', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user.name}</div>
+                        <div style={{ fontSize: '0.72rem', color: '#6B7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user.email}</div>
+                      </div>
+                    </div>
+                    <div style={{ marginTop: 10, display: 'inline-flex', alignItems: 'center', gap: 5, background: '#EFF6FF', borderRadius: 6, padding: '3px 8px' }}>
+                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#3B6FE8" strokeWidth="2.5" strokeLinecap="round">
+                        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                      </svg>
+                      <span style={{ fontSize: '0.68rem', fontWeight: 700, color: '#3B6FE8' }}>GlobalLogic Employee</span>
+                    </div>
+                  </div>
+
+                  {/* Logout */}
+                  <button
+                    onClick={() => { logout(); setShowUserMenu(false); navigate('/login') }}
+                    style={{
+                      width: '100%', padding: '11px 16px',
+                      background: 'none', border: 'none', cursor: 'pointer',
+                      display: 'flex', alignItems: 'center', gap: 10,
+                      fontSize: '0.82rem', fontWeight: 600, color: '#EF4444',
+                      transition: 'background .12s',
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.background = '#FFF5F5'}
+                    onMouseLeave={e => e.currentTarget.style.background = 'none'}
+                  >
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                      <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
+                    </svg>
+                    Sign out
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : (
+            <button className="topbar-btn-login" onClick={() => navigate('/login')}>
+              Log In
+            </button>
+          )}
         </div>
       </div>
     </header>

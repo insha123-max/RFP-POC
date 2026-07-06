@@ -2,6 +2,7 @@ import { useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { runEvaluation, runCustomEvaluation } from '../api'
 import { useEvaluation } from '../context/EvaluationContext'
+import { requestNotificationPermission, sendEvalNotification } from '../utils/notifications'
 
 const STEPS = [
   {
@@ -554,10 +555,12 @@ export default function EvaluatePage() {
   const [rfpFiles, setRfpFiles]   = useState([])
   const [bidFiles, setBidFiles]   = useState([])
   const [customCriteria, setCustomCriteria] = useState(DEFAULT_CUSTOM_CRITERIA)
+  const [useCustomThreshold, setUseCustomThreshold] = useState(false)
+  const [customThreshold, setCustomThreshold] = useState(70)
   const [phase, setPhase]         = useState('upload')   // upload | progress | no_rules | error
   const [stepStates, setStepStates] = useState(STEPS.map(() => 'pending'))
   const [error, setError]         = useState('')
-  const { setReport, setRfpName, setBidName, addToHistory, activePQTQ } = useEvaluation()
+  const { setReport, setRfpName, setBidName, addToHistory, activePQTQ, evalRunning, evalType, setEvalRunning, setEvalType, showToast } = useEvaluation()
   const navigate = useNavigate()
   const [useReadinessCriteria, setUseReadinessCriteria] = useState(true)
   const hasReadinessCriteria = !!(activePQTQ && (activePQTQ.pq_items?.length > 0 || activePQTQ.tq_items?.length > 0))
@@ -590,16 +593,22 @@ export default function EvaluatePage() {
     setRfpName(rfpName)
     const bidName = bidFiles.map(f => f.name).join(', ')
     setBidName(bidName)
+    const rawScore = report.max_score > 0 ? Math.round((report.total_score / report.max_score) * 100) : null
     addToHistory({
       id: Date.now(),
       rfpName,
       bidName,
       report,
       timestamp: new Date().toISOString(),
-      score: Math.round((report.total_score / report.max_score) * 100),
-      passed: report.passed,
+      score: rawScore,
+      passed: report.passed ?? null,
       evaluationType: 'General',
     })
+    setEvalRunning(false)
+    setEvalType(null)
+    const scoreText = rawScore !== null ? `Score: ${rawScore}% — ${report.passed ? 'Pass ✓' : 'Fail ✗'}` : 'Evaluation complete'
+    showToast('Report Ready', `${rfpName.split(',')[0].trim()} · ${scoreText}`, rawScore, report.passed)
+    sendEvalNotification('BidEval — Report Ready', `${rfpName.split(',')[0].trim()} · ${scoreText}`)
     setTimeout(() => navigate('/active-evaluation'), 500)
   }
 
@@ -607,16 +616,21 @@ export default function EvaluatePage() {
     setPhase('progress')
     setStepStates(STEPS.map(() => 'pending'))
     setError('')
+    await requestNotificationPermission()
+    setEvalRunning(true)
+    setEvalType('general')
     const timers = makeTimers()
     try {
       const readinessRules = (hasReadinessCriteria && useReadinessCriteria)
         ? { pq_items: activePQTQ.pq_items, tq_items: activePQTQ.tq_items }
         : null
-      const report = await runEvaluation(rfpFiles, bidFiles, readinessRules)
+      const report = await runEvaluation(rfpFiles, bidFiles, readinessRules, useCustomThreshold ? customThreshold : null)
       timers.forEach(clearTimeout)
       await finishEvaluation(report, rfpFiles.map(f => f.name).join(', '))
     } catch (e) {
       timers.forEach(clearTimeout)
+      setEvalRunning(false)
+      setEvalType(null)
       if (e.message.includes('NO_RULES_FOUND')) {
         setPhase('no_rules')
       } else {
@@ -801,6 +815,24 @@ export default function EvaluatePage() {
     )
   }
 
+  if (evalRunning && evalType === 'general') {
+    return (
+      <div className="page-content fade-in">
+        <div style={{ maxWidth: 520, margin: '4rem auto', textAlign: 'center' }}>
+          <div style={{ width: 64, height: 64, borderRadius: '50%', background: '#EEF2FF', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1.5rem' }}>
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#4F46E5" strokeWidth="2" strokeLinecap="round">
+              <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
+            </svg>
+          </div>
+          <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#1E293B', marginBottom: 8 }}>Evaluation Running in Background</h2>
+          <p style={{ color: '#64748B', fontSize: '0.9rem', lineHeight: 1.6 }}>
+            Your evaluation is processing. You can navigate freely — the results will be saved automatically and you'll land on the results page when done.
+          </p>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="page-content">
       <div style={{ marginBottom: '2rem' }}>
@@ -902,21 +934,48 @@ export default function EvaluatePage() {
               />
             </div>
 
-            <div style={{ borderTop: '1px solid #E2E8F0', paddingTop: '1.5rem', textAlign: 'center' }}>
-              <button
-                className="btn btn-primary"
-                style={{ padding: '0.75rem 2.5rem', fontSize: '1rem' }}
-                disabled={rfpFiles.length === 0 || bidFiles.length === 0}
-                onClick={handleEvaluate}
-              >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                  <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
-                </svg>
-                Run Evaluation
-              </button>
-              <p style={{ marginTop: 10, fontSize: '0.78rem', color: '#94A3B8' }}>
-                Powered by Groq LLaMA — results in 3–4 minutes
-              </p>
+            <div style={{ borderTop: '1px solid #E2E8F0', paddingTop: '1.5rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: '1rem', padding: '0.75rem 1rem', background: '#F8FAFC', borderRadius: 8, border: '1px solid #E2E8F0' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', userSelect: 'none', flex: 1 }}>
+                  <input
+                    type="checkbox"
+                    checked={useCustomThreshold}
+                    onChange={e => setUseCustomThreshold(e.target.checked)}
+                    style={{ width: 16, height: 16, accentColor: '#3B6FE8', cursor: 'pointer' }}
+                  />
+                  <span style={{ fontSize: '0.875rem', fontWeight: 600, color: '#334155' }}>Override pass threshold</span>
+                  <span style={{ fontSize: '0.78rem', color: '#94A3B8' }}>(default: extracted from RFP)</span>
+                </label>
+                {useCustomThreshold && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <input
+                      type="number"
+                      min={50}
+                      max={100}
+                      value={customThreshold}
+                      onChange={e => setCustomThreshold(Math.max(50, Math.min(100, Number(e.target.value))))}
+                      style={{ width: 70, padding: '0.35rem 0.5rem', border: '1.5px solid #3B6FE8', borderRadius: 6, fontSize: '0.9rem', fontWeight: 700, color: '#1E293B', textAlign: 'center', outline: 'none' }}
+                    />
+                    <span style={{ fontSize: '0.875rem', fontWeight: 600, color: '#3B6FE8' }}>%</span>
+                  </div>
+                )}
+              </div>
+              <div style={{ textAlign: 'center' }}>
+                <button
+                  className="btn btn-primary"
+                  style={{ padding: '0.75rem 2.5rem', fontSize: '1rem' }}
+                  disabled={rfpFiles.length === 0 || bidFiles.length === 0}
+                  onClick={handleEvaluate}
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                    <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                  </svg>
+                  Run Evaluation
+                </button>
+                <p style={{ marginTop: 10, fontSize: '0.78rem', color: '#94A3B8' }}>
+                  Powered by Groq LLaMA — results in 3–4 minutes
+                </p>
+              </div>
             </div>
           </div>
 

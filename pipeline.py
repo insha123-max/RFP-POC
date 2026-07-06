@@ -1474,6 +1474,7 @@ def _rfp_has_explicit_marks(text: str) -> bool:
 async def run_full_evaluation(
     rfp_text: str, bid_text: str, prebid_text: str = "",
     readiness_rules: Optional[EvaluationRules] = None,
+    custom_threshold: Optional[float] = None,
 ) -> EvaluationReport:
     prebid_applied = bool(prebid_text.strip())
     # Always extract PQ/TQ criteria from the ORIGINAL rfp_text only.
@@ -1538,6 +1539,8 @@ async def run_full_evaluation(
 
     if not rules.rules_found:
         raise ValueError("NO_RULES_FOUND")
+    if custom_threshold is not None:
+        rules.threshold.overall_pass_mark = custom_threshold
     rfp_scoring_text = await _extract_scoring_sections_semantic(rfp_for_scoring, MAX_RFP_CHARS)
     # pq_criteria=[] because PQ is already embedded in rules.scoring_categories
     # (weight_percent=0 for PQ so they don't inflate the TQ score)
@@ -1755,6 +1758,7 @@ _TQ_KEYWORDS = ["technical qual", "technical eval", "tq —", "tq-", " tq ", "(t
 async def run_pqtq_evaluation(
     rfp_text: str, bid_text: str,
     readiness_rules: Optional[EvaluationRules] = None,
+    custom_threshold: Optional[float] = None,
 ) -> EvaluationReport:
     """Evaluate bid scoped to Pre-Qualification / Technical Qualification criteria only.
 
@@ -1769,6 +1773,8 @@ async def run_pqtq_evaluation(
         rules = await stage2_extract_pqtq_rules(rfp_text)
     if not rules.rules_found:
         raise ValueError("NO_RULES_FOUND")
+    if custom_threshold is not None:
+        rules.threshold.overall_pass_mark = custom_threshold
 
     for cat in rules.scoring_categories:
         if not cat.qualification_type:

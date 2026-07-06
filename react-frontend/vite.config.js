@@ -6,7 +6,12 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      '/api': { target: 'http://localhost:8000', changeOrigin: true }
+      '/api': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+        timeout: 0,          // disable proxy → client timeout
+        proxyTimeout: 0,     // disable proxy → backend timeout
+      }
     }
   },
   build: { outDir: '../frontend-react-dist' }
