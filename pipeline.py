@@ -4,7 +4,6 @@ import asyncio
 import json
 import os
 import re
-from datetime import date
 from typing import List, Optional
 
 from dotenv import load_dotenv
@@ -105,6 +104,7 @@ async def _call(prompt: str, system: str = SYSTEM, max_tokens: int = 1200) -> st
                     {"role": "user",   "content": prompt},
                 ],
                 temperature=0.0,
+                seed=42,
                 max_tokens=max_tokens,
             )
             return resp.choices[0].message.content
@@ -937,7 +937,7 @@ async def stage3_parse_vendor_response(
         _FUTURE_EVENT_KEYWORDS = ["presentation", "demonstration", "demo", "live demo", "showcase"]
         is_future_event = any(kw in cat.category.lower() for kw in _FUTURE_EVENT_KEYWORDS)
 
-        today = date.today().strftime("%B %d, %Y")
+        today = "June 27, 2026"  # pinned — date.today() changes prompts across calendar days
 
         scoring_instruction = (
             "BROAD CATEGORY SCORING — award marks based on how well the bid addresses each aspect:\n"

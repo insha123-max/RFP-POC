@@ -2,7 +2,7 @@ services:
   bideval:
     build: .
     ports:
-      - "8181:8000"
+      - "1500:8000"
     environment:
       - OLLAMA_BASE_URL=http://172.30.111.58:11434
     restart: unless-stopped
