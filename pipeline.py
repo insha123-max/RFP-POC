@@ -214,6 +214,105 @@ _SCORING_ANCHORS = [
     r"\d+\s+or\s+more\s+production\s+gen.?ai",
 ]
 
+# ---------------------------------------------------------------------------
+# Semantic extraction — embeddings-based chunk selection
+# ---------------------------------------------------------------------------
+
+# Embedding model served by Ollama.  Pull once with: ollama pull nomic-embed-text
+_EMBED_MODEL = "nomic-embed-text"
+
+# Query that describes what a scoring/criteria section looks like semantically.
+_SCORING_SEMANTIC_QUERY = (
+    "evaluation scoring criteria marks points score weightage table categories "
+    "max marks threshold pass evaluation basis sub-criteria technical qualification "
+    "pre-qualification eligibility mandatory requirements tender bid evaluation matrix"
+)
+
+_EMBED_CHUNK_SIZE = 600   # chars per embedding chunk
+_EMBED_STEP       = 500   # step between chunks — 100-char overlap
+
+
+async def _embed_batch(texts: list[str]) -> list[list[float]]:
+    """Embed a batch of texts in one Ollama API call.
+
+    Returns a list of float vectors in the same order as `texts`.
+    Returns empty lists for all items if the embedding model is unavailable.
+    """
+    try:
+        resp = await get_client().embeddings.create(
+            model=_EMBED_MODEL,
+            input=texts,
+        )
+        vecs = [e.embedding for e in sorted(resp.data, key=lambda x: x.index)]
+        return vecs
+    except Exception as exc:
+        print(f"[_embed_batch] embedding failed ({exc}) — will fall back to regex")
+        return [[] for _ in texts]
+
+
+def _cosine_sim(a: list[float], b: list[float]) -> float:
+    if not a or not b:
+        return 0.0
+    dot = sum(x * y for x, y in zip(a, b))
+    mag = (sum(x * x for x in a) ** 0.5) * (sum(x * x for x in b) ** 0.5)
+    return dot / mag if mag else 0.0
+
+
+async def _extract_scoring_sections_semantic(text: str, max_chars: int) -> str:
+    """Return the most semantically relevant paragraphs from the document.
+
+    Splits the text into overlapping 600-char chunks, embeds all of them plus
+    the scoring-query string in one batched Ollama call, ranks by cosine
+    similarity, and returns the top-ranked chunks concatenated in document order.
+
+    Falls back silently to the regex-based extractor if the embedding model is
+    not available (e.g. nomic-embed-text not pulled yet).
+    """
+    # Build overlapping chunks, remember their start position in the original text
+    positions: list[int] = []
+    raw_chunks: list[str] = []
+    i = 0
+    while i < len(text):
+        chunk = text[i: i + _EMBED_CHUNK_SIZE]
+        if chunk.strip():
+            positions.append(i)
+            raw_chunks.append(chunk)
+        i += _EMBED_STEP
+
+    if not raw_chunks:
+        return text[:max_chars]
+
+    # Embed query + all chunks in a single batched call
+    all_vecs = await _embed_batch([_SCORING_SEMANTIC_QUERY] + raw_chunks)
+    query_vec  = all_vecs[0]
+    chunk_vecs = all_vecs[1:]
+
+    if not query_vec:
+        # Embedding model unavailable — fall back to regex approach
+        return _extract_scoring_sections(text, max_chars)
+
+    # Rank chunks by similarity to the scoring query
+    scored = [
+        (_cosine_sim(query_vec, vec), pos, chunk)
+        for vec, pos, chunk in zip(chunk_vecs, positions, raw_chunks)
+    ]
+    scored.sort(key=lambda x: -x[0])
+
+    # Greedily pick top-ranked chunks until we reach max_chars
+    selected: list[tuple[int, str]] = []
+    total = 0
+    for _sim, pos, chunk in scored:
+        if total + len(chunk) > max_chars:
+            break
+        selected.append((pos, chunk))
+        total += len(chunk)
+
+    # Restore document order so the LLM sees coherent text
+    selected.sort(key=lambda x: x[0])
+    result = "\n".join(chunk for _, chunk in selected)
+    print(f"[semantic] {len(selected)} chunks selected ({total} chars) from {len(raw_chunks)} total")
+    return result if result.strip() else text[:max_chars]
+
 
 def _find_scoring_section_start(text: str) -> int:
     """Return char offset where the actual scoring/evaluation section begins, or -1.
@@ -557,25 +656,14 @@ def _deduplicate_scoring_categories(categories: list) -> list:
 
 
 async def stage2_extract_rules(rfp_text: str) -> EvaluationRules:
-    # Chunk 0: scoring section anchor → anchor+15K (wherever the table lives)
-    chunks = [_extract_scoring_sections(rfp_text, MAX_RFP_CHARS)]
-    # Chunks 1-2: first 30K chars — PQ/eligibility criteria live near the start
+    # Chunk 0: semantically most-relevant section (replaces regex anchor + keyword rank)
+    chunks = [await _extract_scoring_sections_semantic(rfp_text, MAX_RFP_CHARS)]
+    # Chunks 1-2: first 30K chars — eligibility criteria often appear near the start
     for start in range(0, min(len(rfp_text), MAX_RFP_CHARS * 2), MAX_RFP_CHARS):
         chunk = rfp_text[start: start + MAX_RFP_CHARS]
         if chunk.strip():
             chunks.append(chunk)
-    # Chunks 3-4: continue after the anchor in case the scoring table spans >15K
-    anchor = _find_scoring_section_start(rfp_text)
-    if anchor >= 0:
-        for i in range(1, 3):
-            start = anchor + i * MAX_RFP_CHARS
-            if start < len(rfp_text):
-                chunk = rfp_text[start: start + MAX_RFP_CHARS]
-                if chunk.strip():
-                    chunks.append(chunk)
-    # Tail chunk: always include the last MAX_RFP_CHARS so that supporting documents
-    # appended after a long main RFP are covered even when they fall outside the
-    # sequential and anchor-based windows above.
+    # Tail chunk: always include last MAX_RFP_CHARS for supporting docs appended at end
     tail_start = max(0, len(rfp_text) - MAX_RFP_CHARS)
     tail_chunk = rfp_text[tail_start:]
     if tail_chunk.strip():
@@ -1450,7 +1538,7 @@ async def run_full_evaluation(
 
     if not rules.rules_found:
         raise ValueError("NO_RULES_FOUND")
-    rfp_scoring_text = _extract_scoring_sections(rfp_for_scoring, MAX_RFP_CHARS)
+    rfp_scoring_text = await _extract_scoring_sections_semantic(rfp_for_scoring, MAX_RFP_CHARS)
     # pq_criteria=[] because PQ is already embedded in rules.scoring_categories
     # (weight_percent=0 for PQ so they don't inflate the TQ score)
     return await _run_pipeline(bid_text, rules, rfp_scoring_text, prebid_text=prebid_text, pq_criteria=[])
@@ -1467,19 +1555,12 @@ async def run_evaluation_with_rules(bid_text: str, rules: EvaluationRules) -> Ev
 
 async def stage2_extract_pqtq_rules(rfp_text: str) -> EvaluationRules:
     """Like stage2_extract_rules but scoped to PQ/TQ criteria only."""
-    chunks = [_extract_scoring_sections(rfp_text, MAX_RFP_CHARS)]
+    # Chunk 0: semantically most-relevant section (replaces regex anchor + keyword rank)
+    chunks = [await _extract_scoring_sections_semantic(rfp_text, MAX_RFP_CHARS)]
     for start in range(0, min(len(rfp_text), MAX_RFP_CHARS * 2), MAX_RFP_CHARS):
         chunk = rfp_text[start: start + MAX_RFP_CHARS]
         if chunk.strip():
             chunks.append(chunk)
-    anchor = _find_scoring_section_start(rfp_text)
-    if anchor >= 0:
-        for i in range(1, 3):
-            start = anchor + i * MAX_RFP_CHARS
-            if start < len(rfp_text):
-                chunk = rfp_text[start: start + MAX_RFP_CHARS]
-                if chunk.strip():
-                    chunks.append(chunk)
     # Always include the tail of rfp_text so that additional documents appended at the end
     # (e.g. an evaluation rule sheet uploaded via the "Additional Information" field) are
     # covered even when the main RFP exceeds the 2×MAX_RFP_CHARS sequential window above.
