@@ -17,11 +17,11 @@ async function handleResponse(res) {
 // Auth
 // ---------------------------------------------------------------------------
 
-export async function apiSignup(name, email, password) {
+export async function apiSignup(name, email, password, role = 'evaluator') {
   return handleResponse(await fetch(`${BASE}/auth/signup`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, email, password }),
+    body: JSON.stringify({ name, email, password, role }),
   }))
 }
 
