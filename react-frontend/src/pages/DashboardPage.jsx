@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useEvaluation } from '../context/EvaluationContext'
+import { useAuth } from '../context/AuthContext'
+import { fetchAllEvaluations } from '../api'
 import { PQTQReportModal } from '../components/PQTQReportModal'
 
 function useCountUp(target, duration = 900) {
@@ -211,6 +213,72 @@ function EmptyState({ onStart }) {
         Run your first RFP evaluation to see insights, scores, and vendor analysis here.
       </p>
       <button className="btn btn-primary" onClick={onStart}>+ Start Your First Evaluation</button>
+    </div>
+  )
+}
+
+/* ── Admin: Team Activity (role-gated) ──────────────────────────────────── */
+function AdminTeamActivity() {
+  const { user } = useAuth()
+  const [rows, setRows]   = useState([])
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState(null)
+
+  useEffect(() => {
+    if (user?.role !== 'admin') return
+    setLoading(true)
+    fetchAllEvaluations()
+      .then(setRows)
+      .catch(() => setError('Could not load team evaluations.'))
+      .finally(() => setLoading(false))
+  }, [user?.role])
+
+  if (user?.role !== 'admin') return null
+
+  return (
+    <div className="card" style={{ padding: '1.5rem', marginTop: '1.5rem' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: '1rem' }}>
+        <div className="card-title" style={{ marginBottom: 0 }}>Team Activity</div>
+        <span style={{ fontSize: '0.65rem', fontWeight: 700, padding: '2px 8px', borderRadius: 999, background: '#FEF3C7', color: '#92400E' }}>Admin only</span>
+      </div>
+      {loading ? (
+        <div style={{ fontSize: '0.8rem', color: '#9CA3AF' }}>Loading…</div>
+      ) : error ? (
+        <div style={{ fontSize: '0.8rem', color: '#EF4444' }}>{error}</div>
+      ) : rows.length === 0 ? (
+        <div style={{ fontSize: '0.8rem', color: '#9CA3AF' }}>No evaluations across the team yet.</div>
+      ) : (
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
+            <thead>
+              <tr style={{ textAlign: 'left', color: '#9CA3AF', fontSize: '0.72rem', textTransform: 'uppercase' }}>
+                <th style={{ padding: '6px 10px', fontWeight: 600 }}>RFP</th>
+                <th style={{ padding: '6px 10px', fontWeight: 600 }}>Bid</th>
+                <th style={{ padding: '6px 10px', fontWeight: 600 }}>Evaluator</th>
+                <th style={{ padding: '6px 10px', fontWeight: 600 }}>Score</th>
+                <th style={{ padding: '6px 10px', fontWeight: 600 }}>Result</th>
+                <th style={{ padding: '6px 10px', fontWeight: 600 }}>Date</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.slice(0, 20).map(r => (
+                <tr key={r.id} style={{ borderTop: '1px solid #F3F4F6' }}>
+                  <td style={{ padding: '8px 10px', color: '#111827' }}>{stripExt(r.rfp_name)}</td>
+                  <td style={{ padding: '8px 10px', color: '#374151' }}>{stripExt(r.bid_name)}</td>
+                  <td style={{ padding: '8px 10px', color: '#6B7280' }}>{r.user_name} ({r.user_email})</td>
+                  <td style={{ padding: '8px 10px', color: '#111827', fontWeight: 600 }}>{r.score ?? '—'}%</td>
+                  <td style={{ padding: '8px 10px' }}>
+                    <span style={{ fontSize: '0.68rem', fontWeight: 700, padding: '2px 7px', borderRadius: 4, background: r.passed ? '#DCFCE7' : '#FEE2E2', color: r.passed ? '#15803D' : '#DC2626' }}>
+                      {r.passed ? 'Passed' : 'Failed'}
+                    </span>
+                  </td>
+                  <td style={{ padding: '8px 10px', color: '#9CA3AF' }}>{formatDate(r.timestamp)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   )
 }
@@ -448,6 +516,8 @@ export default function DashboardPage() {
           </div>
         </>
       )}
+
+      <AdminTeamActivity />
 
       {selectedCheckReport && (
         <PQTQReportModal

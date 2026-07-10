@@ -328,11 +328,18 @@ export default function TopBar({ sidebarOpen }) {
                         <div style={{ fontSize: '0.72rem', color: '#6B7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user.email}</div>
                       </div>
                     </div>
-                    <div style={{ marginTop: 10, display: 'inline-flex', alignItems: 'center', gap: 5, background: '#EFF6FF', borderRadius: 6, padding: '3px 8px' }}>
-                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#3B6FE8" strokeWidth="2.5" strokeLinecap="round">
-                        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-                      </svg>
-                      <span style={{ fontSize: '0.68rem', fontWeight: 700, color: '#3B6FE8' }}>GlobalLogic Employee</span>
+                    <div style={{ marginTop: 10, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                      <div style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: '#EFF6FF', borderRadius: 6, padding: '3px 8px' }}>
+                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#3B6FE8" strokeWidth="2.5" strokeLinecap="round">
+                          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                        </svg>
+                        <span style={{ fontSize: '0.68rem', fontWeight: 700, color: '#3B6FE8' }}>GlobalLogic Employee</span>
+                      </div>
+                      {user.role === 'admin' && (
+                        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: '#FEF3C7', borderRadius: 6, padding: '3px 8px' }}>
+                          <span style={{ fontSize: '0.68rem', fontWeight: 700, color: '#92400E' }}>Admin</span>
+                        </div>
+                      )}
                     </div>
                   </div>
 

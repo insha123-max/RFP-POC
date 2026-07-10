@@ -93,7 +93,7 @@ export async function runCustomEvaluation(bidFiles, criteriaData) {
   const files = Array.isArray(bidFiles) ? bidFiles : [bidFiles]
   files.forEach(f => form.append('bid_files', f))
   form.append('criteria_json', JSON.stringify(criteriaData))
-  return handleResponse(await fetch(`${BASE}/evaluate-custom`, { method: 'POST', body: form }))
+  return handleResponse(await fetch(`${BASE}/evaluate-custom`, { method: 'POST', headers: authHeaders(), body: form }))
 }
 
 export async function runPQTQEvaluation(rfpFile, bidFiles, extraRfpFiles = [], readinessRules = null, customThreshold = null) {
@@ -112,13 +112,13 @@ export async function fetchBidReadiness(rfpFile, additionalFile = null) {
   const form = new FormData()
   form.append('rfp_file', rfpFile)
   if (additionalFile) form.append('additional_file', additionalFile)
-  return handleResponse(await fetch(`${BASE}/bid-readiness`, { method: 'POST', body: form }))
+  return handleResponse(await fetch(`${BASE}/bid-readiness`, { method: 'POST', headers: authHeaders(), body: form }))
 }
 
 export async function applyOverride(report, overrides) {
   return handleResponse(await fetch(`${BASE}/override`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify({ report, overrides }),
   }))
 }
@@ -126,9 +126,19 @@ export async function applyOverride(report, overrides) {
 export async function exportWord(report) {
   const res = await fetch(`${BASE}/export/word`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(report),
   })
   if (!res.ok) throw new Error('Export failed')
   return res.blob()
+}
+
+// ---------------------------------------------------------------------------
+// Admin
+// ---------------------------------------------------------------------------
+
+export async function fetchAllEvaluations() {
+  return handleResponse(await fetch(`${BASE}/evaluations/all`, {
+    headers: authHeaders(),
+  }))
 }

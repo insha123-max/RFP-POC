@@ -7,6 +7,10 @@ services:
       - OLLAMA_BASE_URL=http://172.30.111.58:11434
       - DATABASE_URL=postgresql://postgres:admin@db:5432/bideval
       - JWT_SECRET=change-me-use-a-strong-secret-in-production
+      # Comma-separated allow-list — these @globallogic.com emails get role="admin" at signup.
+      - ADMIN_EMAILS=
+    volumes:
+      - ./prompts:/app/prompts
     depends_on:
       db:
         condition: service_healthy

@@ -14,7 +14,6 @@ import ActiveEvaluationPage from './pages/ActiveEvaluationPage'
 import VendorAnalysisPage   from './pages/VendorAnalysisPage'
 import ExecutiveReportPage  from './pages/ExecutiveReportPage'
 import AnalyticsPage        from './pages/AnalyticsPage'
-import BidReadinessPage     from './pages/BidReadinessPage'
 
 function ScrollToTop() {
   const { pathname } = useLocation()
@@ -50,7 +49,6 @@ function AppShell() {
             <Route path="/signup" element={<SignupPage />} />
             <Route path="/"                  element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
             <Route path="/evaluate"          element={<ProtectedRoute><EvaluatePage /></ProtectedRoute>} />
-            <Route path="/bid-readiness"     element={<ProtectedRoute><BidReadinessPage /></ProtectedRoute>} />
             <Route path="/active-evaluation" element={<ProtectedRoute><ActiveEvaluationPage /></ProtectedRoute>} />
             <Route path="/vendor-analysis"   element={<ProtectedRoute><VendorAnalysisPage /></ProtectedRoute>} />
             <Route path="/executive-report"  element={<ProtectedRoute><ExecutiveReportPage /></ProtectedRoute>} />

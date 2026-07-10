@@ -1,5 +1,5 @@
-import { createContext, useContext, useState } from 'react'
-import { apiLogin, apiSignup } from '../api'
+import { createContext, useContext, useState, useEffect } from 'react'
+import { apiLogin, apiSignup, apiMe } from '../api'
 
 const AuthContext = createContext(null)
 
@@ -10,6 +10,18 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(() => {
     try { return JSON.parse(localStorage.getItem(USER_KEY)) } catch { return null }
   })
+
+  // Refresh the cached user (e.g. to pick up a role change) for sessions that
+  // logged in before that field existed on the response.
+  useEffect(() => {
+    if (!localStorage.getItem(TOKEN_KEY)) return
+    apiMe()
+      .then(fresh => {
+        localStorage.setItem(USER_KEY, JSON.stringify(fresh))
+        setUser(fresh)
+      })
+      .catch(() => {})
+  }, [])
 
   async function signup(name, email, password) {
     try {

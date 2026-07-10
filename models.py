@@ -78,6 +78,17 @@ class PQCheck(BaseModel):
     justification: str      # one-sentence reason
 
 
+class EvaluationMetadata(BaseModel):
+    """Pins the exact LLM call parameters and prompt content used to produce a
+    report, so a past result can be traced back to what generated it.
+    """
+    llm_model: str
+    embed_model: str
+    temperature: float
+    seed: int
+    prompt_version: str
+
+
 class EvaluationReport(BaseModel):
     total_score: float
     max_score: float
@@ -92,6 +103,7 @@ class EvaluationReport(BaseModel):
     rules: EvaluationRules
     prebid_qa: List[PrebidQA] = []
     prebid_applied: bool = False
+    metadata: Optional[EvaluationMetadata] = None
 
 
 class ChecklistItem(BaseModel):

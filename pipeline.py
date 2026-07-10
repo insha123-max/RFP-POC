@@ -9,12 +9,15 @@ from typing import List, Optional
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
 
+from prompts.loader import PROMPT_VERSION, render_prompt
+
 from models import (
     BidReadinessResult,
     CategoryMinimum,
     CategoryResult,
     ChecklistItem,
     CriterionEvaluation,
+    EvaluationMetadata,
     EvaluationReport,
     EvaluationRules,
     PQCheck,
@@ -46,6 +49,11 @@ _MODELS = [
     "gemma4:26b",              # last resort — large/slow on CPU
 ]
 MODEL_NAME = _MODELS[0]
+
+# Pinned so every LLM call is reproducible — seed + temperature=0.0 make the
+# same prompt + model produce the same output across runs.
+TEMPERATURE = 0.0
+SEED = 42
 
 # Chunk sizes — Ollama models run locally so no TPM quota pressure.
 # gemma4:26b supports 128K context; keep chunks sane for latency reasons.
@@ -89,28 +97,27 @@ def _get_semaphore() -> asyncio.Semaphore:
 
 
 async def _call(prompt: str, system: str = SYSTEM, max_tokens: int = 1200) -> str:
-    """Call the pinned model (minimax-m2.7:cloud) with no fallback.
+    """Call the pinned model (MODEL_NAME) with no fallback.
 
     Single model ensures consistent, comparable results across evaluations.
     Raises immediately on any error instead of silently switching models.
     """
     async with _get_semaphore():
-        model = "minimax-m2.7:cloud"
         try:
             resp = await get_client().chat.completions.create(
-                model=model,
+                model=MODEL_NAME,
                 messages=[
                     {"role": "system", "content": system},
                     {"role": "user",   "content": prompt},
                 ],
-                temperature=0.0,
-                seed=42,
+                temperature=TEMPERATURE,
+                seed=SEED,
                 max_tokens=max_tokens,
             )
             return resp.choices[0].message.content
         except Exception as exc:
             raise RuntimeError(
-                f"[_call] {model} failed: {exc}. "
+                f"[_call] {MODEL_NAME} failed: {exc}. "
                 f"Ensure Ollama at {OLLAMA_BASE_URL} is reachable and the model is available."
             ) from exc
 
@@ -442,143 +449,90 @@ def _extract_bid_sections(bid_text: str, criteria_list: list, max_chars: int) ->
     return extracted if extracted.strip() else bid_text[:max_chars]
 
 
+def _category_criteria_list(cat: "ScoringCategory") -> list[dict]:
+    """Build the flat category/criterion/max_marks dicts used to evaluate one scoring category."""
+    if cat.subcriteria:
+        return [
+            {"category": cat.category, "criterion": sub.criterion, "max_marks": sub.max_marks}
+            for sub in cat.subcriteria
+        ]
+    return [{
+        "category": cat.category,
+        "criterion": f"{cat.category} — overall assessment",
+        "max_marks": cat.max_marks,
+    }]
+
+
+def _build_criteria_query(criteria_list: list[dict]) -> str:
+    """Turn a criteria list into a natural-language query string for embedding."""
+    query = ". ".join(
+        f"{c.get('category', '')}: {c.get('criterion', '')}".strip(": ")
+        for c in criteria_list
+        if c.get("category") or c.get("criterion")
+    )
+    return query or "evaluation criteria"
+
+
+async def _extract_bid_sections_semantic(
+    bid_raw_chunks: list[str],
+    bid_positions: list[int],
+    bid_chunk_vecs: list[list[float]],
+    query_vec: list[float],
+    bid_text: str,
+    criteria_list: list[dict],
+    max_chars: int,
+) -> str:
+    """Return bid paragraphs most *semantically* relevant to the criteria being evaluated.
+
+    Ranks precomputed bid chunk embeddings by cosine similarity to the criteria's
+    query embedding (both computed once per evaluation, not per category — see
+    stage3_parse_vendor_response). Falls back to keyword matching if embeddings
+    are unavailable (e.g. nomic-embed-text not pulled).
+    """
+    if not query_vec or not bid_chunk_vecs:
+        return _extract_bid_sections(bid_text, criteria_list, max_chars)
+
+    scored = [
+        (_cosine_sim(query_vec, vec), pos, chunk)
+        for vec, pos, chunk in zip(bid_chunk_vecs, bid_positions, bid_raw_chunks)
+    ]
+    scored.sort(key=lambda x: -x[0])
+
+    selected: list[tuple[int, str]] = []
+    total = 0
+    for _sim, pos, chunk in scored:
+        if total + len(chunk) > max_chars:
+            break
+        selected.append((pos, chunk))
+        total += len(chunk)
+
+    selected.sort(key=lambda x: x[0])
+    result = "\n".join(chunk for _, chunk in selected)
+    return result if result.strip() else _extract_bid_sections(bid_text, criteria_list, max_chars)
+
+
 # ---------------------------------------------------------------------------
 # Stage 2 — Rule & Criteria Extraction
 # ---------------------------------------------------------------------------
 
 def _rfp_extract_prompt(chunk: str) -> str:
-    return (
-        f"You are reading a tender/RFP document section. Extract ONLY the SCORING MATRIX — the table "
-        f"that assigns numeric marks/score/points/weightage to evaluation criteria. Copy criterion names "
-        f"and marks EXACTLY as written. Do NOT rename, paraphrase, merge, split, or invent anything.\n\n"
-        f"{chunk}\n\n"
-        f"=== RULE A — IGNORE ELIGIBILITY / PRE-QUALIFICATION SECTIONS ===\n"
-        f"Sections titled 'Eligibility Criteria', 'Pre-Qualification', 'PQ Criteria', 'Mandatory Requirements'\n"
-        f"list pass/fail conditions WITHOUT marks. DO NOT extract these at all.\n"
-        f"Example of what to IGNORE: 'Minimum turnover Rs 4.5 crore', 'At least 1 similar work of Rs 2 crore'\n\n"
-        f"=== RULE B — EXTRACT FROM THE SCORING TABLE ONLY ===\n"
-        f"Scoring tables may use column headers like: Max. Marks | Marks | Score | Points | Weightage | Max Score\n"
-        f"Each ROW of this table becomes one scoring_category. Use the exact text from the criteria/description column as the category name.\n"
-        f"Use the numeric value in the marks/score/points column as max_marks. Do not modify these values.\n\n"
-        f"=== RULE C — TIERED SCORING (MOST IMPORTANT) ===\n"
-        f"When a criterion has tiered/progressive marks (e.g. '1-3 projects=10 marks, 3-5 projects=20 marks, ≥5 projects=30 marks'),\n"
-        f"this is ONE scoring_category. Create EXACTLY ONE subcriterion that describes ALL tiers in its 'criterion' text.\n"
-        f"Set max_marks = the MAXIMUM tier value (highest possible marks for this criterion).\n"
-        f"The tiers are MUTUALLY EXCLUSIVE — a vendor can only fall into one tier.\n"
-        f"Example for 'Firm's Relevant Experience' (max 30):\n"
-        f'  subcriteria: [{{"criterion":"≥1 and <3 similar projects = 10 marks; ≥3 and <5 = 20 marks; ≥5 = 30 marks","max_marks":30}}]\n'
-        f"Example for 'Employee Certifications' (1 employee=4 marks, max 20):\n"
-        f'  subcriteria: [{{"criterion":"1 certified employee = 4 marks; each additional = 4 marks; maximum 20 marks (5 employees)","max_marks":20}}]\n'
-        f"Example for 'Average Annual Turnover' (Rs 4.5 crore=5 marks, +0.25 per crore above, max 10):\n"
-        f'  subcriteria: [{{"criterion":"Rs 4.5 crore = 5 marks; above Rs 4.5 crore: +0.25 marks per Rs 1 crore; maximum 10 marks","max_marks":10}}]\n\n'
-        f"=== RULE D — WHEN TO SET rules_found ===\n"
-        f"Set rules_found=true if scoring_categories is non-empty — meaning you extracted EITHER:\n"
-        f"  (a) rows from a numeric scoring table with explicit Max. Marks (per RULE B), OR\n"
-        f"  (b) pass/fail eligibility conditions extracted per RULE A (with max_marks=1).\n"
-        f"Set rules_found=false ONLY if scoring_categories is empty (no criteria of any kind found in this chunk).\n"
-        f"Never guess marks. Never use eligibility thresholds as numeric scores.\n\n"
-        f"=== RULE E — PRESERVE EXACT NAMES ===\n"
-        f"Copy criterion and category names verbatim from the RFP. Do not rephrase or shorten.\n\n"
-        f"=== RULE F — NO DOUBLE-COUNTING (HIERARCHICAL TABLES) ===\n"
-        f"Some RFPs have multi-level tables where a top-level header row (e.g. 'Category A: 55 marks') contains\n"
-        f"mid-level rows ('Criterion 1: 40 marks', 'Criterion 2: 15 marks') which contain leaf rows ('Sub-Criterion 1.a: 20 marks', etc.).\n"
-        f"RULE: Create ONE scoring_category per TOP-LEVEL PARENT only (the rows whose marks sum to the grand total).\n"
-        f"List ALL LEAF sub-criteria (the deepest level rows) inside that parent's subcriteria[] array.\n"
-        f"Do NOT create a separate scoring_category for intermediate levels or leaf sub-criteria.\n"
-        f"The sum of all scoring_category max_marks MUST equal the stated grand total (e.g., 100).\n\n"
-        f"HIERARCHICAL EXAMPLE — RFP with Category A (55), Category B (20), Category C (25) = 100 total:\n"
-        f"  Category A contains: Criterion 1 (40 marks) → [Sub-Crit 1.a (20), Sub-Crit 1.b (10), Sub-Crit 1.c (10)]\n"
-        f"                       Criterion 2 (15 marks) → [Sub-Crit 2.a (10), Sub-Crit 2.b (5)]\n"
-        f"  CORRECT output for Category A:\n"
-        f'    {{"category":"Category A: Bidder GenAI Delivery Capability","max_marks":55,"weight_percent":55,\n'
-        f'     "subcriteria":[\n'
-        f'       {{"criterion":"Sub-Criterion 1.a: GenAI Experience in Organisation","max_marks":20}},\n'
-        f'       {{"criterion":"Sub-Criterion 1.b: BFSI GenAI Experience","max_marks":10}},\n'
-        f'       {{"criterion":"Sub-Criterion 1.c: Complexity & Scale of Implementations","max_marks":10}},\n'
-        f'       {{"criterion":"Sub-Criterion 2.a: Banking Domain Expertise on GenAI use cases","max_marks":10}},\n'
-        f'       {{"criterion":"Sub-Criterion 2.b: Cloud & Infrastructure Capabilities","max_marks":5}}\n'
-        f'     ]}}\n'
-        f"  WRONG: Creating 'Criterion 1 (40)' and 'Criterion 2 (15)' as separate scoring_categories — those are intermediate, not top-level.\n"
-        f"  WRONG: Creating 13 scoring_categories (parent + all children) summing to 215.\n\n"
-        f"Return ONLY JSON:\n"
-        f'{{"rules_found":true,"scoring_categories":[{{"category":"<exact name>","max_marks":55,"weight_percent":55,'
-        f'"subcriteria":[{{"criterion":"<leaf sub-criterion name>","max_marks":20}},{{"criterion":"<next leaf>","max_marks":10}}]}}],'
-        f'"threshold":{{"overall_pass_mark":70,"category_minimums":[]}}}}\n\n'
-        f"Set rules_found=false ONLY if scoring_categories is completely empty (no numeric criteria of any kind found).\n"
-        f'If empty: {{"rules_found":false,"scoring_categories":[],"threshold":{{"overall_pass_mark":0,"category_minimums":[]}}}}'
-    )
-
+    return render_prompt("criteria_prompt", chunk=chunk)
 
 
 def _rfp_pq_extract_prompt(text: str) -> str:
-    return (
-        f"You are reading a tender/RFP document. Extract ONLY the Pre-Qualification (PQ) / Eligibility criteria.\n\n"
-        f"{text}\n\n"
-        f"These are pass/fail requirements a bidder must meet to be eligible (NOT scored criteria with marks).\n"
-        f"Look for sections titled 'Eligibility Criteria', 'Pre-Qualification', 'PQ Criteria' etc.\n"
-        f"Extract each requirement as a short criterion name and a brief detail describing what is required.\n"
-        f"Do NOT extract scored criteria that have explicit marks/points — only eligibility conditions.\n\n"
-        f"Return ONLY JSON array:\n"
-        f'[{{"criterion":"<short name>","detail":"<what the bidder must demonstrate or provide>"}}]\n'
-        f"If no PQ/eligibility criteria are found, return: []"
-    )
+    return render_prompt("pq_criteria_prompt", text=text)
 
 
 def _pq_evaluate_prompt(bid_text: str, pq_criteria: list) -> str:
-    criteria_json = json.dumps(pq_criteria, indent=2)
-    return (
-        f"You are evaluating a vendor bid against Pre-Qualification (PQ) eligibility requirements.\n\n"
-        f"BID DOCUMENT:\n{bid_text}\n\n"
-        f"PQ REQUIREMENTS:\n{criteria_json}\n\n"
-        f"For each requirement, check whether the bid provides evidence of compliance.\n"
-        f"- 'Met': Bid clearly demonstrates or mentions the requirement.\n"
-        f"- 'Not Met': Bid is silent or explicitly cannot meet the requirement.\n\n"
-        f"Return ONLY a JSON array with one entry per requirement:\n"
-        f'[{{"criterion":"<name>","detail":"<detail>","status":"Met|Not Met","vendor_claim":"<direct quote or Not found>","justification":"<one sentence>"}}]'
+    return render_prompt(
+        "pq_scoring_prompt",
+        bid_text=bid_text,
+        criteria_json=json.dumps(pq_criteria, indent=2),
     )
 
 
 def _rfp_pqtq_prompt(chunk: str) -> str:
-    return (
-        f"You are reading a tender/RFP document section. Extract BOTH:\n"
-        f"  (1) Pre-Qualification (PQ) pass/fail eligibility conditions\n"
-        f"  (2) Technical Qualification (TQ) scored criteria with explicit numeric marks\n\n"
-        f"{chunk}\n\n"
-        f"=== RULE A — PQ ELIGIBILITY CRITERIA ===\n"
-        f"Sections titled 'Eligibility Criteria', 'Pre-Qualification', 'PQ Criteria', 'Mandatory Requirements'\n"
-        f"contain pass/fail conditions WITHOUT numeric marks. Extract EACH condition as a separate scoring_category with max_marks=1.\n"
-        f"Set qualification_type='PQ' for ALL eligibility conditions.\n"
-        f"Example: category='Minimum Annual Turnover', max_marks=1, qualification_type='PQ',\n"
-        f"subcriteria=[{{criterion:'Annual turnover >= Rs 4.5 crore in last 3 years', max_marks:1}}]\n\n"
-        f"=== RULE B — TQ SCORED CRITERIA ===\n"
-        f"Extract rows from the scoring table with explicit numeric marks/points/weightage.\n"
-        f"Set qualification_type='TQ' for ALL scored criteria.\n"
-        f"Copy criterion names and marks EXACTLY as written.\n\n"
-        f"=== RULE C — HIERARCHICAL TABLES (categories with sub-criteria) ===\n"
-        f"If a scoring table has CATEGORY rows (e.g. 'Category A') and SUB-CRITERION rows within each:\n"
-        f"  - Create ONE scoring_category per CATEGORY\n"
-        f"  - Place each sub-criterion row inside that category's subcriteria[] array\n"
-        f"  - Do NOT create separate top-level scoring_categories for sub-criterion rows\n"
-        f"  Example: Category A (20 marks) with Sub-Criterion 1.a (10 marks) + Sub-Criterion 1.b (10 marks)\n"
-        f"  → ONE scoring_category: category='Category A', max_marks=20, qualification_type='TQ',\n"
-        f"    subcriteria=[{{criterion:'Sub-Criterion 1.a...', max_marks:10}}, {{criterion:'Sub-Criterion 1.b...', max_marks:10}}]\n\n"
-        f"=== RULE D — TIERED SCORING ===\n"
-        f"When a TQ criterion has tiered/progressive marks (e.g. '1-2 projects=10pts; 3-5=20pts; 5+=30pts'),\n"
-        f"create ONE scoring_category with ONE subcriterion describing ALL tiers in one string.\n"
-        f"Set max_marks = the highest tier value.\n"
-        f"TIERED = one criterion, multiple score levels. HIERARCHICAL (Rule C) = multiple separate sub-criteria.\n\n"
-        f"=== RULE E — WHEN TO SET rules_found ===\n"
-        f"Set rules_found=true if scoring_categories is non-empty (any PQ or TQ criteria found).\n"
-        f"Set rules_found=false ONLY if no criteria of any kind were found in this chunk.\n"
-        f"Never invent marks. Never use eligibility thresholds (e.g. Rs 4.5 Cr) as numeric scores.\n\n"
-        f"Return ONLY JSON:\n"
-        f'{{"rules_found":true,"scoring_categories":['
-        f'{{"category":"Name","max_marks":30,"weight_percent":30,"qualification_type":"TQ",'
-        f'"subcriteria":[{{"criterion":"<description>","max_marks":30}}]}}],'
-        f'"threshold":{{"overall_pass_mark":70,"category_minimums":[]}}}}\n\n'
-        f"If no criteria of any kind found: "
-        f'{{"rules_found":false,"scoring_categories":[],"threshold":{{"overall_pass_mark":0,"category_minimums":[]}}}}'
-    )
+    return render_prompt("pqtq_criteria_prompt", chunk=chunk)
 
 
 
@@ -897,40 +851,58 @@ async def stage3_parse_vendor_response(
     bid_text: str, rules: EvaluationRules, rfp_scoring_text: str = ""
 ) -> List[CriterionEvaluation]:
     """Evaluate each scoring category separately so bid extraction is focused.
-    
+
     Accepts optional rfp_scoring_text so the LLM can evaluate tiered marks directly.
     """
-    async def _eval_category(cat: ScoringCategory) -> List[CriterionEvaluation]:
+    # Precompute bid-text chunk embeddings once, plus one query embedding per
+    # category, in a single batched Ollama call. Every category then ranks
+    # against these shared vectors instead of re-embedding the whole bid
+    # document once per category (categories run concurrently below).
+    bid_positions: list[int] = []
+    bid_raw_chunks: list[str] = []
+    i = 0
+    while i < len(bid_text):
+        chunk = bid_text[i: i + _EMBED_CHUNK_SIZE]
+        if chunk.strip():
+            bid_positions.append(i)
+            bid_raw_chunks.append(chunk)
+        i += _EMBED_STEP
+
+    category_criteria_lists = [_category_criteria_list(cat) for cat in rules.scoring_categories]
+    category_queries = [_build_criteria_query(cl) for cl in category_criteria_lists]
+
+    query_vecs: list[list[float]] = [[] for _ in category_queries]
+    bid_chunk_vecs: list[list[float]] = []
+    if bid_raw_chunks and category_queries:
+        all_vecs = await _embed_batch(category_queries + bid_raw_chunks)
+        query_vecs = all_vecs[:len(category_queries)]
+        bid_chunk_vecs = all_vecs[len(category_queries):]
+
+    async def _eval_category(cat: ScoringCategory, cat_index: int) -> List[CriterionEvaluation]:
         evals: List[CriterionEvaluation] = []
-        # Build criteria list for this category only
-        criteria_list = []
-        if cat.subcriteria:
-            for sub in cat.subcriteria:
-                criteria_list.append({
-                    "category": cat.category, "criterion": sub.criterion,
-                    "max_marks": sub.max_marks,
-                })
-        else:
-            criteria_list.append({
-                "category": cat.category,
-                "criterion": f"{cat.category} — overall assessment",
-                "max_marks": cat.max_marks,
-            })
+        criteria_list = category_criteria_lists[cat_index]
+        query_vec = query_vecs[cat_index]
 
         is_generic = not cat.subcriteria  # True when no specific subcriteria found
 
-        # For generic categories we cannot target specific sections with keywords,
+        # For generic categories there's no narrow criteria set to match against,
         # so use a larger window to ensure the LLM sees actual bid content.
         # For specific-criteria categories the focused extraction is sufficient.
         if is_generic:
-            relevant_bid = _extract_bid_sections(bid_text, criteria_list, MAX_BID_CHARS_GENERIC)
+            relevant_bid = await _extract_bid_sections_semantic(
+                bid_raw_chunks, bid_positions, bid_chunk_vecs, query_vec,
+                bid_text, criteria_list, MAX_BID_CHARS_GENERIC,
+            )
             # Also append a mid-document slice so content not near the start is reachable.
             mid = len(bid_text) // 2
             mid_slice = bid_text[mid: mid + 2000]
             if mid_slice.strip() and mid_slice not in relevant_bid:
                 relevant_bid = relevant_bid + "\n\n[...mid-document excerpt...]\n" + mid_slice
         else:
-            relevant_bid = _extract_bid_sections(bid_text, criteria_list, MAX_BID_CHARS)
+            relevant_bid = await _extract_bid_sections_semantic(
+                bid_raw_chunks, bid_positions, bid_chunk_vecs, query_vec,
+                bid_text, criteria_list, MAX_BID_CHARS,
+            )
         # Detect whether this is a presentation/demo category that will be evaluated
         # during a future scheduled event. At bid stage, a detailed plan with committed
         # content and live-system evidence should be scored as 'Met', not 'Not Met'.
@@ -939,106 +911,24 @@ async def stage3_parse_vendor_response(
 
         today = "June 27, 2026"  # pinned — date.today() changes prompts across calendar days
 
-        scoring_instruction = (
-            "BROAD CATEGORY SCORING — award marks based on how well the bid addresses each aspect:\n"
-            "- 'Met' (marks_awarded = max_marks for that aspect): Bid clearly demonstrates this aspect "
-            "with specific evidence (project names, numbers, descriptions, methodology).\n"
-            "- 'Partial' (marks_awarded = max_marks * 0.5): Bid mentions or implies the aspect but "
-            "without concrete evidence or detail.\n"
-            "- 'Not Met' (marks_awarded = 0): Aspect is completely absent from the bid.\n"
-            "Default to 'Partial' if there is ANY relevant content — only use 'Not Met' when the topic "
-            "is truly not addressed at all in the document."
-            if is_generic else
-            "IMPORTANT CONTEXT: This is a BID DOCUMENT evaluation, not post-event scoring. "
-            "For criteria that involve future scheduled events (presentations, demonstrations), "
-            "evaluate based on the vendor's PLAN and CAPABILITY evidence in the bid:\n"
-            "- 'Met': Vendor provides detailed plan/content AND has demonstrable live systems/capability. Set marks_awarded = max_marks.\n"
-            "- 'Partial': Vendor confirms participation but lacks detail or supporting capability evidence. Set marks_awarded = 50% of max_marks.\n"
-            "- 'Not Met': No mention of the criterion, or vendor explicitly cannot meet it. Set marks_awarded = 0.\n"
-            "Do NOT score 'Not Met' simply because the event has not yet occurred."
-            if is_future_event else
-            f"PASS/FAIL SCORING (today is {today}):\n"
-            "Evaluate each criterion as a simple binary check — there are no tiers.\n"
-            "- 'Met' (marks_awarded = max_marks): The bid clearly satisfies the requirement.\n"
-            "- 'Not Met' (marks_awarded = 0): The bid does not satisfy the requirement.\n"
-            "Do NOT invent tiers or partial credit. For numeric minimums (e.g. 'minimum 5 years'), "
-            "use today's date to calculate the duration and mark 'Met' if the vendor meets or exceeds it.\n"
-            "If the requirement is 'must include X' and the bid includes X, mark as Met."
-            if not rfp_scoring_text else
-            "TIERED SCORING INSTRUCTIONS:\n"
-            "Many criteria have tiered marks (e.g. 3+ BFSI cases = 10 marks, 2 cases = 6 marks, 1 case = 3 marks; "
-            "or 1000+ users = 10 marks, 100-999 users = 6 marks; "
-            "or 15+ implementations = 10 marks, 10-14 = 8 marks, 5-9 = 6 marks; "
-            "or 50%+ team with 2+ certs = 5 marks, 50%+ with 1 cert = 3 marks). "
-            "Read what the vendor ACTUALLY claims (number of cases, users, implementations, certification counts) "
-            "and award marks_awarded based on the appropriate tier — NOT simply max_marks for any evidence. "
-            "'Met' means the vendor clearly meets the HIGHEST tier. "
-            "'Partial' means the vendor meets a LOWER tier but not the highest. "
-            "'Not Met' means no qualifying evidence exists. "
-            "ALWAYS set marks_awarded to the specific tiered value that matches the vendor's evidence."
-        )
-
-        # PQ (eligibility) criteria are always binary pass/fail — override any other scoring branch.
-        if cat.qualification_type == "PQ":
-            scoring_instruction = (
-                f"PASS/FAIL SCORING — this is an eligibility/pre-qualification criterion (today is {today}):\n"
-                "- 'Met' (marks_awarded = max_marks): Bid clearly satisfies this requirement.\n"
-                "- 'Not Met' (marks_awarded = 0): Bid does not satisfy this requirement.\n"
-                "Binary decision only — no partial credit. For numeric thresholds (e.g. 'minimum 5 years', "
-                "'turnover >= Rs 4.5 Cr'), mark Met if the vendor meets or exceeds the stated minimum."
-            )
-
-        # Append to every branch — LLMs (especially smaller ones) routinely invert
-        # numeric comparisons. These explicit rules prevent the most common mistakes.
-        scoring_instruction += (
-            "\n\nNUMERIC COMPARISON RULES (apply these carefully before deciding Met/Not Met):\n"
-            "1. MINIMUM requirements (e.g. 'at least X years', 'minimum X', 'not less than X'):\n"
-            "   Met = vendor's value >= X.  Example: minimum 5 years, vendor has 8 years → MET.\n"
-            "2. MAXIMUM / ceiling requirements (e.g. 'must not exceed X', 'maximum X', 'up to X'):\n"
-            "   Met = vendor's value <= X.  Example: must not exceed INR 25,00,000, vendor quotes INR 21,50,000 → MET.\n"
-            "3. Indian currency (INR lakhs/crores): read commas as Indian grouping.\n"
-            "   1,00,000 = 1 lakh = 100 000.  21,50,000 = 21.5 lakhs = 2 150 000.\n"
-            "   25,00,000 = 25 lakhs = 2 500 000.  So 21,50,000 < 25,00,000.\n"
-            "4. Never swap the vendor value and the threshold when writing the justification.\n"
-            "   Correct: 'Vendor has 8 years which meets the 5-year minimum.'\n"
-            "   Wrong:   'Vendor has 8 years but minimum is 5 years — risk.'"
-        )
-
         rfp_context = (
             f"\nRFP SCORING TIERS FOR REFERENCE (use these to determine the correct tier and marks):\n{rfp_scoring_text[:4000]}\n"
             if rfp_scoring_text and not is_future_event else ""
         )
 
-        if is_generic:
-            prompt = f"""Evaluate the vendor bid for the "{cat.category}" category (total: {cat.max_marks} marks).
-
-VENDOR BID:
-{relevant_bid}
-{rfp_context}
-IMPORTANT: This is a real vendor bid document. It may be a technical proposal, project report, company profile,
-or similar. Evaluate what is actually present in the document — do NOT assume it is empty or irrelevant.
-
-No specific subcriteria are defined in the RFP for this category.
-Identify 3 to 5 specific evaluation aspects relevant to "{cat.category}" and evaluate each against the bid.
-Distribute {cat.max_marks} marks proportionally across the aspects (marks must sum to exactly {cat.max_marks}).
-
-{scoring_instruction}
-
-Return ONLY a JSON array with 3-5 items (one per aspect):
-[{{"criterion":"<specific aspect name>","category":"{cat.category}","max_marks":<proportional_max>,"marks_awarded":<actual_marks — use partial marks not just 0 or max>,"vendor_claim":"<direct quote or brief description from the bid, or 'Not found'>","source_reference":"<section heading or 'Not found'>","compliance_status":"Met|Partial|Not Met","confidence":"High|Medium|Low","justification":"<one sentence citing specific bid evidence>"}}]"""
-        else:
-            prompt = f"""Evaluate the vendor bid for the "{cat.category}" category.
-
-VENDOR BID:
-{relevant_bid}
-{rfp_context}
-CRITERIA:
-{json.dumps(criteria_list, indent=2)}
-
-{scoring_instruction}
-
-Return ONLY a JSON array. For each criterion include marks_awarded as the ACTUAL numeric marks (based on tiered scoring), NOT just max_marks:
-[{{"criterion":"<name>","category":"<cat>","max_marks":<n>,"marks_awarded":<actual_tiered_marks>,"vendor_claim":"<quote or Not found>","source_reference":"<section or Not found>","compliance_status":"Met|Partial|Not Met","confidence":"High|Medium|Low","justification":"<one sentence explaining the tier awarded>"}}]"""
+        prompt = render_prompt(
+            "scoring_prompt",
+            category=cat.category,
+            max_marks=cat.max_marks,
+            qualification_type=cat.qualification_type,
+            is_generic=is_generic,
+            is_future_event=is_future_event,
+            has_rfp_scoring_text=bool(rfp_scoring_text),
+            today=today,
+            relevant_bid=relevant_bid,
+            rfp_context=rfp_context,
+            criteria_list_json=json.dumps(criteria_list, indent=2),
+        )
 
         try:
             items = _parse_array(await _call(prompt, max_tokens=3000))
@@ -1073,7 +963,7 @@ Return ONLY a JSON array. For each criterion include marks_awarded as the ACTUAL
         return evals
 
     cat_eval_lists = await asyncio.gather(
-        *[_eval_category(cat) for cat in rules.scoring_categories],
+        *[_eval_category(cat, idx) for idx, cat in enumerate(rules.scoring_categories)],
         return_exceptions=True,
     )
     all_evals: List[CriterionEvaluation] = []
@@ -1209,28 +1099,11 @@ async def stage5_gap_analysis(
         for ce in criteria_evals
     ]
 
-    prompt = f"""Based on the evaluation results below, identify the top risks and gaps in the vendor's bid.
-
-CATEGORY SCORES (Technical Qualification):
-{json.dumps(cat_summary, indent=2)}
-
-INDIVIDUAL CRITERIA RESULTS:
-{json.dumps(crit_summary, indent=2)}
-
-Focus on:
-1. TQ categories scoring below 50% — identify WHY (missing evidence, wrong tier, etc.)
-2. Individual criteria marked Not Met — what was absent from the bid
-3. Categories with 0 marks — critical gaps
-4. Any contradictions or red flags in vendor claims
-
-Return ONLY a JSON array of up to 8 items ordered by severity (High first):
-[
-  {{
-    "risk_area": "<short label>",
-    "severity": "High|Medium|Low",
-    "description": "<one to two sentences describing the gap or risk>"
-  }}
-]"""
+    prompt = render_prompt(
+        "risk_prompt",
+        cat_summary_json=json.dumps(cat_summary, indent=2),
+        crit_summary_json=json.dumps(crit_summary, indent=2),
+    )
 
     items = _parse_array(await _call(prompt, max_tokens=800))
     if not isinstance(items, list):
@@ -1282,14 +1155,13 @@ async def stage6_executive_summary(
         for cr in category_results
     ]
 
-    prompt = f"""Write a 2–3 sentence executive summary for an RFP evaluation report.
-
-Result: {"PASSED" if passed else "FAILED"}
-Total Score: {total_score} / {max_score}
-Category Breakdown: {'; '.join(cat_summary)}
-
-Cover: overall result, key strengths, and key weaknesses. Use plain, non-technical language.
-Return ONLY the summary text — no JSON, no headers."""
+    prompt = render_prompt(
+        "summary_prompt",
+        result_label="PASSED" if passed else "FAILED",
+        total_score=total_score,
+        max_score=max_score,
+        cat_summary="; ".join(cat_summary),
+    )
 
     return (await _call(prompt, max_tokens=200)).strip()
 
@@ -1305,15 +1177,7 @@ _QA_SYSTEM = (
 
 async def stage_extract_prebid_qa(prebid_text: str) -> list:
     """Extract structured Q&A pairs from a pre-bid clarification document."""
-    prompt = (
-        "You are reading a Pre-Bid Q&A / Clarification document from a government procurement process.\n\n"
-        f"{prebid_text[:8000]}\n\n"
-        "Extract ALL question-and-answer pairs from this document.\n"
-        "Each entry should capture the vendor's question and the procuring authority's official answer.\n\n"
-        "Return ONLY a JSON array (no prose, no markdown):\n"
-        '[{"question": "<the vendor question>", "answer": "<the official answer>"}]\n\n'
-        "If no clear Q&A pairs are found, return an empty array: []"
-    )
+    prompt = render_prompt("qa_prompt", prebid_text=prebid_text[:8000])
     try:
         items = _parse_array(await _call(prompt, system=_QA_SYSTEM))
         return [PrebidQA(**item) for item in items if isinstance(item, dict) and "question" in item and "answer" in item]
@@ -1448,6 +1312,13 @@ async def _run_pipeline(
         rules=rules,
         prebid_qa=prebid_qa,
         prebid_applied=prebid_applied,
+        metadata=EvaluationMetadata(
+            llm_model=MODEL_NAME,
+            embed_model=_EMBED_MODEL,
+            temperature=TEMPERATURE,
+            seed=SEED,
+            prompt_version=PROMPT_VERSION,
+        ),
     )
 
 
@@ -1786,7 +1657,7 @@ async def run_pqtq_evaluation(
             else:
                 cat.qualification_type = "TQ"
 
-    rfp_scoring_text = _extract_scoring_sections(rfp_text, MAX_RFP_CHARS)
+    rfp_scoring_text = await _extract_scoring_sections_semantic(rfp_text, MAX_RFP_CHARS)
     return await _run_pipeline(bid_text, rules, rfp_scoring_text)
 
 
