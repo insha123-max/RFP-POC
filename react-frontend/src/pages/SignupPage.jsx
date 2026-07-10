@@ -91,8 +91,13 @@ export default function SignupPage() {
           boxShadow: '0 4px 24px rgba(0,0,0,0.08)',
           padding: '2.25rem 2rem',
         }}>
-          {/* Title */}
-          <div style={{ marginBottom: '1.75rem' }}>
+          {/* Logo + Title */}
+          <div style={{ marginBottom: '1.75rem', textAlign: 'center' }}>
+            <img
+              src="/logo.png"
+              alt="BidEval AI"
+              style={{ width: 64, height: 64, borderRadius: '50%', objectFit: 'cover', marginBottom: '1rem' }}
+            />
             <h1 style={{ fontSize: '1.5rem', fontWeight: 700, color: '#111827', margin: '0 0 6px' }}>
               Create your account
             </h1>
