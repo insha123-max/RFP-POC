@@ -23,9 +23,9 @@ export function AuthProvider({ children }) {
       .catch(() => {})
   }, [])
 
-  async function signup(name, email, password) {
+  async function signup(name, email, password, role = 'evaluator') {
     try {
-      const data = await apiSignup(name, email, password)
+      const data = await apiSignup(name, email, password, role)
       localStorage.setItem(TOKEN_KEY, data.token)
       localStorage.setItem(USER_KEY, JSON.stringify(data.user))
       setUser(data.user)

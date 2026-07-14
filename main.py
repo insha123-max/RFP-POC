@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 
 from db.auth import create_token, decode_token, hash_password, verify_password
 from db.database import Base, engine, get_db
-from db.models import Evaluation, User
+from db.models import Evaluation, Role, User
 
 from document import extract_text
 from export import generate_word_report
@@ -53,10 +53,13 @@ _ADMIN_EMAILS = {
 # Pydantic schemas for auth / evaluations
 # ---------------------------------------------------------------------------
 
+_VALID_ROLES = {"admin", "evaluator"}
+
 class SignupRequest(BaseModel):
     name: str
     email: str
     password: str
+    role: str = "evaluator"
 
 class LoginRequest(BaseModel):
     email: str
@@ -89,6 +92,13 @@ def _migrate_schema():
         conn.execute(text(
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(50) NOT NULL DEFAULT 'evaluator'"
         ))
+        # Seed roles reference table
+        conn.execute(text("""
+            INSERT INTO roles (name, label, description) VALUES
+              ('admin',     'Admin',     'Full access including team activity and user management'),
+              ('evaluator', 'Evaluator', 'Can run evaluations and view personal history')
+            ON CONFLICT (name) DO NOTHING
+        """))
 
 
 app = FastAPI(
@@ -151,7 +161,11 @@ def signup(req: SignupRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Password must be 72 characters or fewer.")
     if db.execute(select(User).where(User.email == req.email.lower())).scalar_one_or_none():
         raise HTTPException(status_code=409, detail="An account with this email already exists.")
-    role = "admin" if req.email.lower() in _ADMIN_EMAILS else "evaluator"
+    requested_role = req.role.lower() if req.role else "evaluator"
+    if requested_role not in _VALID_ROLES:
+        raise HTTPException(status_code=400, detail=f"Invalid role. Choose from: {', '.join(_VALID_ROLES)}")
+    # ADMIN_EMAILS env var always overrides to admin regardless of chosen role
+    role = "admin" if req.email.lower() in _ADMIN_EMAILS else requested_role
     user = User(name=req.name.strip(), email=req.email.lower(), password=hash_password(req.password), role=role)
     db.add(user)
     db.commit()

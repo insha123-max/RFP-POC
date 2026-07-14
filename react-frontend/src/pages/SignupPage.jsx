@@ -10,6 +10,7 @@ export default function SignupPage() {
   const [email, setEmail]       = useState('')
   const [password, setPassword] = useState('')
   const [confirm, setConfirm]   = useState('')
+  const [role, setRole]         = useState('evaluator')
   const [showPass, setShowPass] = useState(false)
   const [showConf, setShowConf] = useState(false)
   const [error, setError]       = useState(null)
@@ -39,7 +40,7 @@ export default function SignupPage() {
     if (password !== confirm) { setError('Passwords do not match.'); return }
     if (password.length > 72) { setError('Password must be 72 characters or fewer.'); return }
     setLoading(true)
-    const err = await signup(name, email, password)
+    const err = await signup(name, email, password, role)
     setLoading(false)
     if (err) { setError(err); return }
     navigate('/', { replace: true })
@@ -156,6 +157,43 @@ export default function SignupPage() {
                   Must be a @globallogic.com address
                 </div>
               )}
+            </div>
+
+            {/* Role */}
+            <div>
+              <label style={labelStyle}>Role</label>
+              <div style={{ display: 'flex', gap: 10 }}>
+                {[
+                  { value: 'evaluator', label: 'Evaluator', desc: 'Run evaluations, view your history', icon: (
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+                  )},
+                  { value: 'admin', label: 'Admin', desc: 'Full access + team activity', icon: (
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                  )},
+                ].map(opt => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => setRole(opt.value)}
+                    style={{
+                      flex: 1, padding: '0.65rem 0.75rem', borderRadius: 8, cursor: 'pointer',
+                      border: `1.5px solid ${role === opt.value ? '#F26522' : '#E2E8F0'}`,
+                      background: role === opt.value ? '#FFF7F3' : '#fff',
+                      textAlign: 'left', transition: 'all .15s',
+                      display: 'flex', flexDirection: 'column', gap: 4,
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{ color: role === opt.value ? '#F26522' : '#94A3B8' }}>{opt.icon}</span>
+                      <span style={{ fontSize: '0.85rem', fontWeight: 700, color: role === opt.value ? '#F26522' : '#1A1A2E' }}>{opt.label}</span>
+                      {role === opt.value && (
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#F26522" strokeWidth="3" style={{ marginLeft: 'auto' }}><polyline points="20 6 9 17 4 12"/></svg>
+                      )}
+                    </div>
+                    <span style={{ fontSize: '0.7rem', color: '#94A3B8', paddingLeft: 22 }}>{opt.desc}</span>
+                  </button>
+                ))}
+              </div>
             </div>
 
             {/* Password */}
