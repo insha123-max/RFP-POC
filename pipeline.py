@@ -1,4 +1,4 @@
-"""7-stage RFP evaluation pipeline powered by Ollama (gemma4:26b primary)."""
+"""7-stage RFP evaluation pipeline powered by Ollama (minimax-m2.7:cloud only)."""
 
 import asyncio
 import json
@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 from openai import AsyncOpenAI
 
 from prompts.loader import PROMPT_VERSION, render_prompt
+import vector_store
 
 from models import (
     BidReadinessResult,
@@ -38,15 +39,8 @@ OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL")
 if not OLLAMA_BASE_URL:
     raise RuntimeError("OLLAMA_BASE_URL environment variable is not set. Add it to your .env file.")
 
-# Model preference order — best accuracy first.
-# gemma4:26b is the largest local model and gives the best reasoning quality.
-# minimax-m2.7:cloud is cloud-backed and is a strong secondary.
-# llama3:latest / llama3:8b are the same model (same digest) — used as fallback.
 _MODELS = [
-    "minimax-m2.7:cloud",      # primary — cloud-backed, fast inference
-    "llama3:8b",               # fallback — CPU inference
-    "llama3:latest",           # identical to llama3:8b, backup slot
-    "gemma4:26b",              # last resort — large/slow on CPU
+    "minimax-m2.7:cloud",      # only model in use — cloud-backed via Ollama
 ]
 MODEL_NAME = _MODELS[0]
 
@@ -257,6 +251,19 @@ async def _embed_batch(texts: list[str]) -> list[list[float]]:
         return [[] for _ in texts]
 
 
+async def _embed_chunks_cached(doc_id: str, chunks: list[str]) -> list[list[float]]:
+    """Embed chunks, reusing persisted vectors (vector_store.py) keyed by doc_id
+    so re-evaluating the same document doesn't re-embed identical chunks.
+    """
+    cached = vector_store.get_cached_embeddings(doc_id, len(chunks))
+    if cached is not None:
+        return cached
+    vecs = await _embed_batch(chunks)
+    if any(vecs):  # don't cache empty vectors from a failed embedding call
+        vector_store.store_embeddings(doc_id, chunks, vecs)
+    return vecs
+
+
 def _cosine_sim(a: list[float], b: list[float]) -> float:
     if not a or not b:
         return 0.0
@@ -289,10 +296,14 @@ async def _extract_scoring_sections_semantic(text: str, max_chars: int) -> str:
     if not raw_chunks:
         return text[:max_chars]
 
-    # Embed query + all chunks in a single batched call
-    all_vecs = await _embed_batch([_SCORING_SEMANTIC_QUERY] + raw_chunks)
-    query_vec  = all_vecs[0]
-    chunk_vecs = all_vecs[1:]
+    # Query is embedded fresh each time; chunk embeddings are reused from the
+    # persisted vector store when this document was embedded before.
+    doc_id = vector_store.doc_hash(text)
+    query_vecs, chunk_vecs = await asyncio.gather(
+        _embed_batch([_SCORING_SEMANTIC_QUERY]),
+        _embed_chunks_cached(doc_id, raw_chunks),
+    )
+    query_vec = query_vecs[0]
 
     if not query_vec:
         # Embedding model unavailable — fall back to regex approach
@@ -874,9 +885,11 @@ async def stage3_parse_vendor_response(
     query_vecs: list[list[float]] = [[] for _ in category_queries]
     bid_chunk_vecs: list[list[float]] = []
     if bid_raw_chunks and category_queries:
-        all_vecs = await _embed_batch(category_queries + bid_raw_chunks)
-        query_vecs = all_vecs[:len(category_queries)]
-        bid_chunk_vecs = all_vecs[len(category_queries):]
+        bid_doc_id = vector_store.doc_hash(bid_text)
+        query_vecs, bid_chunk_vecs = await asyncio.gather(
+            _embed_batch(category_queries),
+            _embed_chunks_cached(bid_doc_id, bid_raw_chunks),
+        )
 
     async def _eval_category(cat: ScoringCategory, cat_index: int) -> List[CriterionEvaluation]:
         evals: List[CriterionEvaluation] = []
