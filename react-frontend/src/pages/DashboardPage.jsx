@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useEvaluation } from '../context/EvaluationContext'
 import { useAuth } from '../context/AuthContext'
-import { fetchAllEvaluations } from '../api'
+import { fetchAllEvaluations, fetchEvaluationDocuments, downloadDocument, fetchJobs } from '../api'
 import { PQTQReportModal } from '../components/PQTQReportModal'
 
 function useCountUp(target, duration = 900) {
@@ -44,6 +44,69 @@ function getEvalType(entry) {
   const cats = entry.report?.category_results || []
   const hasPQTQ = cats.some(cr => cr.qualification_type === 'PQ' || cr.qualification_type === 'TQ')
   return hasPQTQ ? 'PQTQ' : 'General'
+}
+
+function isUuid(v) {
+  return typeof v === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v)
+}
+
+/* ── Documents Button ────────────────────────────────────────────────────── */
+function DocumentsButton({ evaluationId }) {
+  const [open, setOpen] = useState(false)
+  const [docs, setDocs] = useState(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+
+  if (!isUuid(evaluationId)) return null
+
+  const toggle = async () => {
+    if (open) { setOpen(false); return }
+    setOpen(true)
+    if (docs === null) {
+      setLoading(true)
+      setError('')
+      try {
+        setDocs(await fetchEvaluationDocuments(evaluationId))
+      } catch (e) {
+        setError(e.message || 'Failed to load documents')
+      } finally {
+        setLoading(false)
+      }
+    }
+  }
+
+  return (
+    <div style={{ position: 'relative' }}>
+      <button onClick={toggle} title="Original documents" style={{ width: 28, height: 28, borderRadius: 6, border: '1px solid #E5E7EB', background: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+        </svg>
+      </button>
+      {open && (
+        <>
+          <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 20 }} />
+          <div style={{ position: 'absolute', top: 32, right: 0, zIndex: 21, background: '#fff', border: '1px solid #E5E7EB', borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,.12)', padding: '0.5rem', minWidth: 220, maxWidth: 280 }}>
+            <div style={{ fontSize: '0.68rem', fontWeight: 700, color: '#9CA3AF', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.03em' }}>Original Documents</div>
+            {loading && <div style={{ fontSize: '0.78rem', color: '#9CA3AF', padding: '2px 6px' }}>Loading…</div>}
+            {error && <div style={{ fontSize: '0.78rem', color: '#DC2626', padding: '2px 6px' }}>{error}</div>}
+            {docs && docs.length === 0 && <div style={{ fontSize: '0.78rem', color: '#9CA3AF', padding: '2px 6px' }}>No documents stored.</div>}
+            {docs && docs.map(d => (
+              <button
+                key={d.id}
+                onClick={() => downloadDocument(d.id, d.filename)}
+                style={{ display: 'block', width: '100%', textAlign: 'left', padding: '5px 6px', fontSize: '0.78rem', color: '#374151', background: 'none', border: 'none', cursor: 'pointer', borderRadius: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+                onMouseEnter={e => { e.currentTarget.style.background = '#F3F4F6' }}
+                onMouseLeave={e => { e.currentTarget.style.background = 'none' }}
+                title={d.filename}
+              >
+                ⬇ {d.filename} <span style={{ color: '#9CA3AF' }}>({d.role})</span>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  )
 }
 
 /* ── Sub-components ─────────────────────────────────────────────────────── */
@@ -92,6 +155,7 @@ function EvalCard({ entry, onView, onReport, onDelete }) {
           <span className={`badge ${entry.passed ? 'badge-low' : 'badge-high'}`}>
             {entry.passed ? '✓ Passed' : '✗ Failed'}
           </span>
+          <DocumentsButton evaluationId={entry.id} />
           {confirming ? (
             <div style={{ display: 'flex', gap: 4 }}>
               <button onClick={() => { onDelete(); setConfirming(false) }} style={{ padding: '3px 10px', borderRadius: 6, fontSize: '0.72rem', fontWeight: 700, background: '#EF4444', color: '#fff', border: 'none', cursor: 'pointer' }}>Confirm</button>
@@ -158,6 +222,7 @@ function PQTQCheckCard({ entry, onDelete, onViewReport }) {
           }}>
             {entry.pqPass ? '✓ PQ Pass' : '✗ PQ Fail'}
           </span>
+          <DocumentsButton evaluationId={entry.id} />
           {confirming ? (
             <div style={{ display: 'flex', gap: 4 }}>
               <button onClick={() => { onDelete(); setConfirming(false) }} style={{ padding: '3px 10px', borderRadius: 6, fontSize: '0.72rem', fontWeight: 700, background: '#EF4444', color: '#fff', border: 'none', cursor: 'pointer' }}>Confirm</button>
@@ -283,10 +348,59 @@ function AdminTeamActivity() {
   )
 }
 
+/* ── Processing Banner ───────────────────────────────────────────────────── */
+function ProcessingBanner({ jobs }) {
+  if (jobs.length === 0) return null
+  const label = jobs.length === 1 ? '1 evaluation' : `${jobs.length} evaluations`
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 10, marginBottom: '1.25rem',
+      background: '#EEF2FF', border: '1px solid #C7D2FE', borderRadius: 10, padding: '0.75rem 1rem',
+    }}>
+      <div style={{
+        width: 16, height: 16, borderRadius: '50%', flexShrink: 0,
+        border: '2px solid #C7D2FE', borderTop: '2px solid #4F46E5',
+        animation: 'spin 1s linear infinite',
+      }} />
+      <span style={{ fontSize: '0.82rem', fontWeight: 600, color: '#3730A3' }}>
+        {label} processing in the background — this page will update automatically when done.
+      </span>
+    </div>
+  )
+}
+
 /* ── Main Page ───────────────────────────────────────────────────────────── */
 export default function DashboardPage() {
   const navigate = useNavigate()
-  const { history, setCurrentEvaluation, deleteFromHistory, clearAllHistory, pqtqCheckHistory, deletePQTQCheck, clearAllPQTQChecks } = useEvaluation()
+  const { history, setCurrentEvaluation, deleteFromHistory, clearAllHistory, pqtqCheckHistory, deletePQTQCheck, clearAllPQTQChecks, refreshHistory } = useEvaluation()
+  const [inFlightJobs, setInFlightJobs] = useState([])
+
+  useEffect(() => {
+    let cancelled = false
+    let timer = null
+    let previousCount = 0
+
+    const tick = async () => {
+      try {
+        const [queued, running] = await Promise.all([fetchJobs('queued'), fetchJobs('running')])
+        if (cancelled) return
+        const current = [...queued, ...running]
+        // A job that was in-flight and no longer is has reached a terminal
+        // state — refresh history so it shows up without a manual reload.
+        if (previousCount > 0 && current.length < previousCount) {
+          refreshHistory().catch(() => {})
+        }
+        previousCount = current.length
+        setInFlightJobs(current)
+      } catch {
+        // transient network hiccup — next tick will retry
+      }
+      if (!cancelled) timer = setTimeout(tick, 5000)
+    }
+    tick()
+
+    return () => { cancelled = true; if (timer) clearTimeout(timer) }
+  }, [refreshHistory])
 
   // Merge both lists, sorted by most recent first
   const combined = [
@@ -333,6 +447,8 @@ export default function DashboardPage() {
         <h1 className="gradient-title" style={{ fontSize: '1.6rem', fontWeight: 800, marginBottom: 4 }}>Procurement Dashboard</h1>
         <p style={{ fontSize: '0.875rem', color: '#6B7280' }}>Overview of RFP evaluations and AI insights</p>
       </div>
+
+      <ProcessingBanner jobs={inFlightJobs} />
 
       {!hasAnyData ? (
         <EmptyState onStart={() => navigate('/evaluate')} />

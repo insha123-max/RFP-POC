@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { runPQTQEvaluation, runCustomEvaluation } from '../api'
+import { runPQTQEvaluation, runCustomEvaluation, pollJobUntilDone } from '../api'
 import { useEvaluation } from '../context/EvaluationContext'
 import { requestNotificationPermission, sendEvalNotification } from '../utils/notifications'
 
@@ -591,7 +591,7 @@ export default function PQTQEvaluatePage() {
       ? Math.round((report.total_score / report.max_score) * 100)
       : null
     addPQTQCheck({
-      id: Date.now(),
+      id: report.evaluation_id || Date.now(),
       rfpName,
       bidName,
       report,
@@ -620,9 +620,11 @@ export default function PQTQEvaluatePage() {
       const readinessRules = (hasReadinessCriteria && useReadinessCriteria)
         ? { pq_items: activePQTQ.pq_items, tq_items: activePQTQ.tq_items }
         : null
-      const report = await runPQTQEvaluation(rfpFile, bidFiles, extraFiles, readinessRules, useCustomThreshold ? customThreshold : null)
+      const { job_id } = await runPQTQEvaluation(rfpFile, bidFiles, extraFiles, readinessRules, useCustomThreshold ? customThreshold : null)
+      const job = await pollJobUntilDone(job_id)
       timers.forEach(clearTimeout)
-      await finishEvaluation(report, rfpFile.name)
+      if (job.status === 'failed') throw new Error(job.error_message || 'Evaluation failed')
+      await finishEvaluation(job.result, rfpFile.name)
     } catch (e) {
       timers.forEach(clearTimeout)
       setEvalRunning(false)
@@ -671,7 +673,7 @@ export default function PQTQEvaluatePage() {
     setError('')
     const timers = makeTimers()
     try {
-      const report = await runCustomEvaluation(bidFiles, buildCriteriaPayload({
+      const { job_id } = await runCustomEvaluation(bidFiles, buildCriteriaPayload({
         threshold: 70,
         categories: categories.map(c => ({
           id: Date.now() + Math.random(),
@@ -680,8 +682,10 @@ export default function PQTQEvaluatePage() {
           criteria: c.criteria.map(cr => ({ id: Date.now() + Math.random(), question: cr.question, maxMarks: cr.max_marks, mandatory: cr.mandatory })),
         })),
       }))
+      const job = await pollJobUntilDone(job_id)
       timers.forEach(clearTimeout)
-      await finishEvaluation(report, rfpFile?.name ?? 'Custom PQTQ Criteria')
+      if (job.status === 'failed') throw new Error(job.error_message || 'Evaluation failed')
+      await finishEvaluation(job.result, rfpFile?.name ?? 'Custom PQTQ Criteria')
     } catch (e) {
       timers.forEach(clearTimeout)
       setError(e.message)
@@ -695,9 +699,11 @@ export default function PQTQEvaluatePage() {
     setError('')
     const timers = makeTimers()
     try {
-      const report = await runCustomEvaluation([...bidFiles, ...extraFiles], buildCriteriaPayload(customCriteria))
+      const { job_id } = await runCustomEvaluation([...bidFiles, ...extraFiles], buildCriteriaPayload(customCriteria))
+      const job = await pollJobUntilDone(job_id)
       timers.forEach(clearTimeout)
-      await finishEvaluation(report, rfpFile?.name ?? 'PQTQ Custom Criteria')
+      if (job.status === 'failed') throw new Error(job.error_message || 'Evaluation failed')
+      await finishEvaluation(job.result, rfpFile?.name ?? 'PQTQ Custom Criteria')
     } catch (e) {
       timers.forEach(clearTimeout)
       setError(e.message)

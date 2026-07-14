@@ -104,6 +104,7 @@ class EvaluationReport(BaseModel):
     prebid_qa: List[PrebidQA] = []
     prebid_applied: bool = False
     metadata: Optional[EvaluationMetadata] = None
+    evaluation_id: Optional[str] = None  # id of the auto-saved DB row, set by the API after persisting
 
 
 class ChecklistItem(BaseModel):
@@ -132,3 +133,4 @@ class OverrideEntry(BaseModel):
 class OverrideRequest(BaseModel):
     report: EvaluationReport
     overrides: List[OverrideEntry]
+    evaluation_id: Optional[str] = None

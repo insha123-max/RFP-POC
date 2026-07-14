@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react'
-import { fetchEvaluations, saveEvaluation, deleteEvaluationApi, clearAllEvaluationsApi } from '../api'
+import { fetchEvaluations, deleteEvaluationApi, clearAllEvaluationsApi } from '../api'
 
 const Ctx = createContext(null)
 
@@ -25,36 +25,36 @@ export function EvaluationProvider({ children }) {
     setTimeout(() => setToast(null), 8000)
   }, [])
 
+  const refreshHistory = useCallback(async () => {
+    const rows = await fetchEvaluations()
+    const general = rows.filter(r => r.evaluation_type !== 'PQTQ')
+    const pqtq    = rows.filter(r => r.evaluation_type === 'PQTQ')
+    setHistory(general.map(r => ({
+      id: r.id,
+      rfpName: r.rfp_name,
+      bidName: r.bid_name,
+      evaluationType: r.evaluation_type,
+      score: r.score,
+      passed: r.passed,
+      report: r.report,
+      timestamp: r.timestamp,
+    })))
+    setPQTQChecks(pqtq.map(r => ({
+      id: r.id,
+      rfpName: r.rfp_name,
+      bidName: r.bid_name,
+      evaluationType: r.evaluation_type,
+      score: r.score,
+      passed: r.passed,
+      report: r.report,
+      timestamp: r.timestamp,
+    })))
+  }, [])
+
   // Load history from DB on mount
   useEffect(() => {
-    fetchEvaluations()
-      .then(rows => {
-        const general = rows.filter(r => r.evaluation_type !== 'PQTQ')
-        const pqtq    = rows.filter(r => r.evaluation_type === 'PQTQ')
-        setHistory(general.map(r => ({
-          id: r.id,
-          rfpName: r.rfp_name,
-          bidName: r.bid_name,
-          evaluationType: r.evaluation_type,
-          score: r.score,
-          passed: r.passed,
-          report: r.report,
-          timestamp: r.timestamp,
-        })))
-        setPQTQChecks(pqtq.map(r => ({
-          id: r.id,
-          rfpName: r.rfp_name,
-          bidName: r.bid_name,
-          evaluationType: r.evaluation_type,
-          score: r.score,
-          passed: r.passed,
-          report: r.report,
-          timestamp: r.timestamp,
-        })))
-      })
-      .catch(() => {})
-      .finally(() => setHistoryLoaded(true))
-  }, [])
+    refreshHistory().catch(() => {}).finally(() => setHistoryLoaded(true))
+  }, [refreshHistory])
 
   const setReport  = r => { setReportState(r);  localStorage.setItem('eval_report',  JSON.stringify(r)) }
   const setRfpName = n => { setRfpNameState(n); localStorage.setItem('eval_rfpName', JSON.stringify(n)) }
@@ -67,21 +67,10 @@ export function EvaluationProvider({ children }) {
   }
 
   const addToHistory = async entry => {
-    try {
-      const saved = await saveEvaluation({
-        rfp_name: entry.rfpName,
-        bid_name: entry.bidName,
-        evaluation_type: entry.evaluationType || 'General',
-        score: entry.score,
-        passed: entry.passed,
-        report: entry.report,
-      })
-      const withId = { ...entry, id: saved.id }
-      setHistory(prev => [withId, ...prev].slice(0, 100))
-    } catch {
-      // fallback: add with local id so UI doesn't break
-      setHistory(prev => [entry, ...prev].slice(0, 100))
-    }
+    // Backend now auto-saves General/Custom evaluations (entry.id is the real
+    // DB row id via report.evaluation_id), so we skip hitting the save API
+    // here to avoid duplicate DB entries.
+    setHistory(prev => [entry, ...prev].slice(0, 100))
   }
 
   const deleteFromHistory = async id => {
@@ -141,7 +130,7 @@ export function EvaluationProvider({ children }) {
     )}
     <Ctx.Provider value={{
       report, setReport, rfpName, setRfpName, bidName, setBidName,
-      history, addToHistory, deleteFromHistory, clearAllHistory, setCurrentEvaluation,
+      history, addToHistory, deleteFromHistory, clearAllHistory, setCurrentEvaluation, refreshHistory,
       pqtqCheckHistory, addPQTQCheck, deletePQTQCheck, clearAllPQTQChecks,
       activePQTQ, setActivePQTQ,
       historyLoaded,

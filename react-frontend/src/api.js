@@ -49,14 +49,6 @@ export async function fetchEvaluations() {
   }))
 }
 
-export async function saveEvaluation(entry) {
-  return handleResponse(await fetch(`${BASE}/evaluations`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...authHeaders() },
-    body: JSON.stringify(entry),
-  }))
-}
-
 export async function deleteEvaluationApi(id) {
   const res = await fetch(`${BASE}/evaluations/${id}`, {
     method: 'DELETE',
@@ -73,8 +65,32 @@ export async function clearAllEvaluationsApi() {
   if (!res.ok) throw new Error('Clear failed')
 }
 
+export async function fetchEvaluationDocuments(evaluationId) {
+  return handleResponse(await fetch(`${BASE}/evaluations/${evaluationId}/documents`, {
+    headers: authHeaders(),
+  }))
+}
+
+export async function downloadDocument(documentId, filename) {
+  const res = await fetch(`${BASE}/documents/${documentId}/download`, {
+    headers: authHeaders(),
+  })
+  if (!res.ok) throw new Error('Download failed')
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename || 'document'
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}
+
 // ---------------------------------------------------------------------------
-// Evaluation runs
+// Evaluation runs — these enqueue a background job and return {job_id, status}
+// immediately (202 Accepted). Use fetchJob()/pollJobUntilDone() to learn when
+// the job finishes, since the LLM pipeline can take several minutes.
 // ---------------------------------------------------------------------------
 
 export async function runEvaluation(rfpFiles, bidFiles, readinessRules = null, customThreshold = null) {
@@ -113,6 +129,35 @@ export async function fetchBidReadiness(rfpFile, additionalFile = null) {
   form.append('rfp_file', rfpFile)
   if (additionalFile) form.append('additional_file', additionalFile)
   return handleResponse(await fetch(`${BASE}/bid-readiness`, { method: 'POST', headers: authHeaders(), body: form }))
+}
+
+// ---------------------------------------------------------------------------
+// Job polling
+// ---------------------------------------------------------------------------
+
+export async function fetchJob(jobId) {
+  return handleResponse(await fetch(`${BASE}/jobs/${jobId}`, {
+    headers: authHeaders(),
+  }))
+}
+
+export async function fetchJobs(status = null) {
+  const qs = status ? `?status=${encodeURIComponent(status)}` : ''
+  return handleResponse(await fetch(`${BASE}/jobs${qs}`, {
+    headers: authHeaders(),
+  }))
+}
+
+// Polls a job until it reaches a terminal state. Resolves with the job
+// (status 'completed' or 'failed') — callers check job.status themselves so
+// a failed job doesn't need to be distinguished via a thrown exception.
+export async function pollJobUntilDone(jobId, { intervalMs = 3000, signal } = {}) {
+  while (true) {
+    if (signal?.aborted) throw new DOMException('Polling aborted', 'AbortError')
+    const job = await fetchJob(jobId)
+    if (job.status === 'completed' || job.status === 'failed') return job
+    await new Promise(resolve => setTimeout(resolve, intervalMs))
+  }
 }
 
 export async function applyOverride(report, overrides) {

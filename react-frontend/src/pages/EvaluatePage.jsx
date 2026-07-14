@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { runEvaluation, runCustomEvaluation } from '../api'
+import { runEvaluation, runCustomEvaluation, pollJobUntilDone } from '../api'
 import { useEvaluation } from '../context/EvaluationContext'
 import { requestNotificationPermission, sendEvalNotification } from '../utils/notifications'
 
@@ -595,7 +595,7 @@ export default function EvaluatePage() {
     setBidName(bidName)
     const rawScore = report.max_score > 0 ? Math.round((report.total_score / report.max_score) * 100) : null
     addToHistory({
-      id: Date.now(),
+      id: report.evaluation_id || Date.now(),
       rfpName,
       bidName,
       report,
@@ -624,9 +624,15 @@ export default function EvaluatePage() {
       const readinessRules = (hasReadinessCriteria && useReadinessCriteria)
         ? { pq_items: activePQTQ.pq_items, tq_items: activePQTQ.tq_items }
         : null
-      const report = await runEvaluation(rfpFiles, bidFiles, readinessRules, useCustomThreshold ? customThreshold : null)
+      const { job_id } = await runEvaluation(rfpFiles, bidFiles, readinessRules, useCustomThreshold ? customThreshold : null)
+      // The evaluation now runs in a background worker — poll until it's
+      // done instead of blocking the request. This also means the result
+      // still arrives (and gets saved/notified) even if the user navigates
+      // to a different page in the app while waiting.
+      const job = await pollJobUntilDone(job_id)
       timers.forEach(clearTimeout)
-      await finishEvaluation(report, rfpFiles.map(f => f.name).join(', '))
+      if (job.status === 'failed') throw new Error(job.error_message || 'Evaluation failed')
+      await finishEvaluation(job.result, rfpFiles.map(f => f.name).join(', '))
     } catch (e) {
       timers.forEach(clearTimeout)
       setEvalRunning(false)
@@ -646,9 +652,11 @@ export default function EvaluatePage() {
     setError('')
     const timers = makeTimers()
     try {
-      const report = await runCustomEvaluation(bidFiles, buildCriteriaPayload(customCriteria))
+      const { job_id } = await runCustomEvaluation(bidFiles, buildCriteriaPayload(customCriteria))
+      const job = await pollJobUntilDone(job_id)
       timers.forEach(clearTimeout)
-      await finishEvaluation(report, rfpFiles.length > 0 ? rfpFiles.map(f => f.name).join(', ') : 'Custom Criteria')
+      if (job.status === 'failed') throw new Error(job.error_message || 'Evaluation failed')
+      await finishEvaluation(job.result, rfpFiles.length > 0 ? rfpFiles.map(f => f.name).join(', ') : 'Custom Criteria')
     } catch (e) {
       timers.forEach(clearTimeout)
       setError(e.message)

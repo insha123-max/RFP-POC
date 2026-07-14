@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { fetchBidReadiness } from '../api'
+import { fetchBidReadiness, pollJobUntilDone } from '../api'
 import { useEvaluation } from '../context/EvaluationContext'
 import { PQTQReportModal } from '../components/PQTQReportModal'
 
@@ -242,7 +242,10 @@ export default function BidReadinessPage() {
     setError(''); setLoading(true); setResult(null); setChecked({})
     setCustomPQ([]); setCustomTQ([])
     try {
-      setResult(await fetchBidReadiness(rfpFile, addFile || null))
+      const { job_id } = await fetchBidReadiness(rfpFile, addFile || null)
+      const job = await pollJobUntilDone(job_id)
+      if (job.status === 'failed') throw new Error(job.error_message || 'Extraction failed')
+      setResult(job.result)
     } catch (e) {
       setError(e.message || 'Extraction failed. Please try again.')
     } finally { setLoading(false) }
