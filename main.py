@@ -6,6 +6,9 @@ import uuid
 from typing import Any, List, Optional
 
 from dotenv import load_dotenv
+
+load_dotenv()
+
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
@@ -38,8 +41,6 @@ from pipeline import (
     run_pqtq_evaluation,
 )
 from prompts.loader import validate_prompts
-
-load_dotenv()
 
 # Emails in this allow-list get role="admin" at signup. Comma-separated env var —
 # e.g. ADMIN_EMAILS=lead1@globallogic.com,lead2@globallogic.com
