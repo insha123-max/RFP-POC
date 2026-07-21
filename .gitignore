@@ -12,6 +12,7 @@ dist/
 build/
 .pytest_cache/
 .mypy_cache/
+*.log
 .env.example
 react-frontend/node_modules/
 
