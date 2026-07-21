@@ -1,13 +1,16 @@
-"""7-stage RFP evaluation pipeline powered by Ollama (minimax-m2.7:cloud only)."""
+"""7-stage RFP evaluation pipeline powered by a genuinely local Ollama model,
+configured via MODEL_NAME in .env (no data leaves the VM)."""
 
 import asyncio
 import json
+import math
 import os
 import re
+import time
 from typing import List, Optional
 
+import httpx
 from dotenv import load_dotenv
-from openai import AsyncOpenAI
 
 from prompts.loader import PROMPT_VERSION, render_prompt
 import vector_store
@@ -39,22 +42,148 @@ OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL")
 if not OLLAMA_BASE_URL:
     raise RuntimeError("OLLAMA_BASE_URL environment variable is not set. Add it to your .env file.")
 
-_MODELS = [
-    "minimax-m2.7:cloud",      # only model in use — cloud-backed via Ollama
-]
-MODEL_NAME = _MODELS[0]
+# Model is env-driven, not hardcoded — swap models (e.g. qwen3.5:4b for speed
+# vs qwen3.5:latest/9b for accuracy) by editing .env, no code change needed.
+MODEL_NAME = os.environ.get("MODEL_NAME")
+if not MODEL_NAME:
+    raise RuntimeError("MODEL_NAME environment variable is not set. Add it to your .env file.")
+
+# Optional per-stage escalation to a different model (e.g. a larger one for
+# the highest-stakes compliance judgment) without a config system — set
+# STAGE3_MODEL_OVERRIDE in .env and it threads through stage 3's _call()
+# sites via the `model=` kwarg. Unset/empty = always use MODEL_NAME.
+STAGE3_MODEL_OVERRIDE: Optional[str] = os.environ.get("STAGE3_MODEL_OVERRIDE") or None
 
 # Pinned so every LLM call is reproducible — seed + temperature=0.0 make the
 # same prompt + model produce the same output across runs.
 TEMPERATURE = 0.0
 SEED = 42
 
-# Chunk sizes — Ollama models run locally so no TPM quota pressure.
-# gemma4:26b supports 128K context; keep chunks sane for latency reasons.
-MAX_RFP_CHARS         =  15_000
-MAX_BID_CHARS         =   6_000   # larger than Groq (no quota limit)
-MAX_BID_CHARS_GENERIC =  10_000   # wide window for generic categories
-MAX_DISQ_CHARS        =   6_000
+# --- Dynamic chunking ---------------------------------------------------
+# Chunk COUNT is derived from document size (see _dynamic_chunks below), not
+# hardcoded — a short RFP might need 1-2 chunks, a 400-page one 30+. These
+# constants control chunk SIZE, which controls how many chunks a document
+# needs. Never truncate: if content doesn't fit one call, it becomes more
+# calls instead of being dropped.
+
+NUM_CTX_CEILING = int(os.environ.get("NUM_CTX_CEILING", "8192"))
+# CPU-safe practical cap while Ollama has no GPU access on the deploy VM
+# (driver too old; fixing it needs interactive console access that isn't
+# available — see infra notes). Raise via env once GPU is unblocked — chunk
+# count drops automatically, no code changes needed. This is a ceiling, not
+# a target: the context actually requested per call is auto-adjusted down
+# further to whatever the configured model natively supports — see
+# _num_ctx_for() — so switching MODEL_NAME never requests more context than
+# that model can actually give.
+
+CHARS_PER_TOKEN = 3
+# Conservative estimate, not a real tokenizer — deliberately biased low so
+# it never UNDER-estimates token count and risks overflowing num_ctx. RFP
+# and tender text (tables, numbers, short lines) tokenizes less efficiently
+# than prose.
+
+RESERVED_TEMPLATE_TOKENS = 2000
+# Headroom for the system prompt + Jinja template + any criteria/context
+# text injected alongside the chunk. Largest template on disk is
+# scoring_prompt.md (~5.9KB, ~1500 tok); this adds margin on top.
+
+SAFETY_MARGIN_TOKENS = 200
+
+# Bounded excerpt of RFP scoring-tier text handed to stage 3 as reference
+# context (separate from rule extraction — this is a supplementary lookup
+# snippet, already re-truncated to 4000 chars where it's used, not subject
+# to the no-data-loss guarantee below).
+RFP_SCORING_CONTEXT_CHARS = 15_000
+
+
+def _chunk_budget_tokens(max_tokens: int, num_ctx: int) -> int:
+    """How many tokens of raw document content one chunk can safely hold,
+    given this call's output budget and the fixed template/system overhead.
+    """
+    return max(500, num_ctx - max_tokens - RESERVED_TEMPLATE_TOKENS - SAFETY_MARGIN_TOKENS)
+
+
+_DETECTED_CTX_CACHE: dict[str, int] = {}
+
+
+def _model_context_length(model: str) -> int:
+    """Query Ollama's native /api/show for this model's real max context
+    window (not exposed through the OpenAI-compatible chat/embeddings
+    client), so chunk sizing auto-adjusts to whatever model is actually
+    configured instead of a single number tuned for one specific model.
+
+    Cached per model name — this is one HTTP call the first time a model
+    is used, not per-request. Falls back to NUM_CTX_CEILING if Ollama can't
+    be reached at that moment; dynamic chunking still works safely at that
+    fallback size, just possibly with more/smaller chunks than necessary.
+    """
+    if model in _DETECTED_CTX_CACHE:
+        return _DETECTED_CTX_CACHE[model]
+
+    detected = NUM_CTX_CEILING
+    try:
+        resp = httpx.post(f"{OLLAMA_BASE_URL}/api/show", json={"model": model}, timeout=10)
+        resp.raise_for_status()
+        model_info = resp.json().get("model_info", {})
+        for key, value in model_info.items():
+            if key.endswith(".context_length") and isinstance(value, int) and value > 0:
+                detected = value
+                break
+        print(f"[_model_context_length] {model} native max context = {detected}")
+    except Exception as exc:
+        print(f"[_model_context_length] could not query {model} ({exc}); using fallback {NUM_CTX_CEILING}")
+
+    _DETECTED_CTX_CACHE[model] = detected
+    return detected
+
+
+def _num_ctx_for(model: str) -> int:
+    """The context window to actually request for this model: the smaller
+    of what it natively supports and the CPU-safe practical ceiling. Never
+    requests more than a model can give (protects a small-context model
+    from being asked for more than it has) and never blindly asks for a
+    huge model's full native window on CPU (protects latency).
+    """
+    return min(_model_context_length(model), NUM_CTX_CEILING)
+
+
+def _estimate_tokens(text: str) -> int:
+    return len(text) // CHARS_PER_TOKEN + 1
+
+
+def _dynamic_chunks(text: str, budget_tokens: int) -> list[str]:
+    """Split text into the minimum number of chunks such that each fits
+    budget_tokens, covering 100% of the input with no gaps.
+
+    Chunk count scales with document size — there is no upper cap.
+    Coverage always wins over call count.
+    """
+    if not text.strip():
+        return []
+
+    total_tokens = _estimate_tokens(text)
+    n = max(1, math.ceil(total_tokens / budget_tokens))
+    if n == 1:
+        return [text]
+
+    target_len = math.ceil(len(text) / n)
+    chunks: list[str] = []
+    start = 0
+    window = 400  # how far to search for a paragraph break near the target cut
+
+    while start < len(text):
+        end = min(len(text), start + target_len)
+        if end < len(text):
+            break_pos = text.rfind("\n\n", max(start, end - window), min(len(text), end + window))
+            if break_pos > start:
+                end = break_pos
+        chunk = text[start:end].strip()
+        if chunk:
+            chunks.append(chunk)
+        start = end
+
+    return chunks
+
 
 SYSTEM = (
     "You are an expert RFP (Request for Proposal) / Tender Evaluation Assistant. "
@@ -65,21 +194,27 @@ SYSTEM = (
     "If something is not found in the document, state 'Not found in document' and score it 0."
 )
 
-_client: Optional[AsyncOpenAI] = None
+_http_client: Optional[httpx.AsyncClient] = None
 
 
-def get_client() -> AsyncOpenAI:
-    global _client
-    if _client is None:
-        _client = AsyncOpenAI(
-            base_url=f"{OLLAMA_BASE_URL}/v1",
-            api_key="ollama",          # Ollama ignores the key; must be non-empty
-        )
-    return _client
+def get_http_client() -> httpx.AsyncClient:
+    """Shared client for Ollama's *native* API (/api/chat, /api/embed) —
+    NOT the OpenAI-compatible /v1/* endpoints. Confirmed by direct testing
+    that Ollama's OpenAI-compat layer silently ignores extra_body's
+    options.num_ctx (it always sizes to the model's native max context
+    regardless of what's requested); the native API honors it correctly,
+    including shrinking an already-loaded model on request. No timeout —
+    generation can legitimately take minutes depending on load and chunk size.
+    """
+    global _http_client
+    if _http_client is None:
+        _http_client = httpx.AsyncClient(base_url=OLLAMA_BASE_URL, timeout=None)
+    return _http_client
 
 
-# Limit concurrent LLM calls so the cloud-backed primary model (minimax-m2.7:cloud)
-# is not flooded by asyncio.gather firing all chunks simultaneously → 429 errors.
+# Ollama is a local server now, not a rate-limited cloud endpoint — this
+# caps total concurrent in-flight generations across evaluations running in
+# this process, rather than piling everything into Ollama's own queue.
 _CALL_SEMAPHORE: asyncio.Semaphore | None = None
 
 
@@ -90,28 +225,75 @@ def _get_semaphore() -> asyncio.Semaphore:
     return _CALL_SEMAPHORE
 
 
-async def _call(prompt: str, system: str = SYSTEM, max_tokens: int = 1200) -> str:
-    """Call the pinned model (MODEL_NAME) with no fallback.
+async def _call(prompt: str, system: str = SYSTEM, max_tokens: int = 1200, model: str | None = None) -> str:
+    """Call MODEL_NAME (or an explicit per-call override) with no fallback.
 
-    Single model ensures consistent, comparable results across evaluations.
+    Pinning ensures consistent, comparable results across evaluations.
     Raises immediately on any error instead of silently switching models.
+
+    Uses Ollama's *native* /api/chat, not the OpenAI-compatible /v1/*
+    endpoint — confirmed by direct testing that the OpenAI-compat layer
+    silently ignores num_ctx and always loads a model at its native max
+    context regardless of what's requested, while the native API honors it
+    correctly (including shrinking an already-loaded model). Passing an
+    explicit, correctly-sized num_ctx matters: Ollama's own auto-default is
+    derived from detected VRAM and can otherwise balloon to a model's full
+    native context, forcing a huge KV cache and much slower inference.
+
+    think=False disables qwen3.5's chain-of-thought reasoning mode.
+    Confirmed by direct testing: with thinking left on, the model spends
+    the entire num_predict budget on an internal "thinking" block and
+    never reaches the actual answer — response comes back with empty
+    content and done_reason="length". We want direct structured JSON, not
+    a reasoning trace, so thinking is unwanted overhead here regardless.
     """
+    model = model or MODEL_NAME
+    num_ctx = _num_ctx_for(model)
+    queued_at = time.monotonic()
+    print(f"[_call] queued  model={model} num_ctx={num_ctx} max_tokens={max_tokens} prompt_chars={len(prompt)}")
     async with _get_semaphore():
+        # Time spent waiting for a semaphore slot vs. time spent actually
+        # calling Ollama — split out on purpose. A long queue_wait means
+        # too much concurrent load for what's available; a long call_time
+        # means the model/hardware itself is slow. Conflating the two is
+        # exactly what made the original slowdown hard to diagnose.
+        started = time.monotonic()
+        queue_wait = started - queued_at
         try:
-            resp = await get_client().chat.completions.create(
-                model=MODEL_NAME,
-                messages=[
-                    {"role": "system", "content": system},
-                    {"role": "user",   "content": prompt},
-                ],
-                temperature=TEMPERATURE,
-                seed=SEED,
-                max_tokens=max_tokens,
+            resp = await get_http_client().post(
+                "/api/chat",
+                json={
+                    "model": model,
+                    "messages": [
+                        {"role": "system", "content": system},
+                        {"role": "user",   "content": prompt},
+                    ],
+                    "stream": False,
+                    "think": False,
+                    "options": {
+                        "temperature": TEMPERATURE,
+                        "seed": SEED,
+                        "num_predict": max_tokens,
+                        "num_ctx": num_ctx,
+                    },
+                },
             )
-            return resp.choices[0].message.content
+            resp.raise_for_status()
+            data = resp.json()
+            content = data["message"]["content"]
+            call_time = time.monotonic() - started
+            if not content:
+                # Defensive: if a model ever comes back empty despite
+                # think=False (e.g. one that doesn't support disabling it),
+                # log loudly instead of silently returning "" to the caller.
+                print(f"[_call] WARNING model={model} returned empty content — done_reason={data.get('done_reason')} thinking_present={'thinking' in data.get('message', {})}")
+            print(f"[_call] done    model={model} queue_wait={queue_wait:.1f}s call_time={call_time:.1f}s response_chars={len(content)}")
+            return content
         except Exception as exc:
+            call_time = time.monotonic() - started
+            print(f"[_call] FAILED  model={model} queue_wait={queue_wait:.1f}s call_time={call_time:.1f}s error={exc}")
             raise RuntimeError(
-                f"[_call] {MODEL_NAME} failed: {exc}. "
+                f"[_call] {model} failed: {exc}. "
                 f"Ensure Ollama at {OLLAMA_BASE_URL} is reachable and the model is available."
             ) from exc
 
@@ -236,18 +418,33 @@ _EMBED_STEP       = 500   # step between chunks — 100-char overlap
 async def _embed_batch(texts: list[str]) -> list[list[float]]:
     """Embed a batch of texts in one Ollama API call.
 
+    Uses Ollama's native /api/embed (not the OpenAI-compatible /v1/embeddings)
+    for the same num_ctx-honoring reason as _call() — see its docstring.
+    Native /api/embed returns embeddings in input order, no re-sorting needed.
+
     Returns a list of float vectors in the same order as `texts`.
     Returns empty lists for all items if the embedding model is unavailable.
     """
+    started = time.monotonic()
+    num_ctx = _num_ctx_for(_EMBED_MODEL)
+    print(f"[_embed_batch] start   model={_EMBED_MODEL} num_ctx={num_ctx} batch_size={len(texts)}")
     try:
-        resp = await get_client().embeddings.create(
-            model=_EMBED_MODEL,
-            input=texts,
+        resp = await get_http_client().post(
+            "/api/embed",
+            json={
+                "model": _EMBED_MODEL,
+                "input": texts,
+                "options": {"num_ctx": num_ctx},
+            },
         )
-        vecs = [e.embedding for e in sorted(resp.data, key=lambda x: x.index)]
-        return vecs
+        resp.raise_for_status()
+        embeddings = resp.json()["embeddings"]
+        elapsed = time.monotonic() - started
+        print(f"[_embed_batch] done    batch_size={len(texts)} elapsed={elapsed:.1f}s")
+        return embeddings
     except Exception as exc:
-        print(f"[_embed_batch] embedding failed ({exc}) — will fall back to regex")
+        elapsed = time.monotonic() - started
+        print(f"[_embed_batch] FAILED  batch_size={len(texts)} elapsed={elapsed:.1f}s error={exc} — will fall back to regex")
         return [[] for _ in texts]
 
 
@@ -522,6 +719,58 @@ async def _extract_bid_sections_semantic(
     return result if result.strip() else _extract_bid_sections(bid_text, criteria_list, max_chars)
 
 
+_SIMILARITY_KEEP_RATIO = 0.6
+# Keep any chunk scoring within 60% of this category's top-matching chunk,
+# instead of a character cap. A category with lots of genuinely relevant
+# content keeps more chunks; a narrow category keeps fewer. Nothing gets
+# dropped just because there wasn't "room" in a fixed budget.
+
+
+def _select_relevant_chunks(
+    scored: list[tuple[float, int, str]],
+) -> list[tuple[int, str]]:
+    """scored: (similarity, position, chunk_text) for every chunk in the
+    document. Returns every chunk above a dynamic relevance floor, in
+    document order — no count/character cap.
+    """
+    if not scored:
+        return []
+    top_score = max(s for s, _, _ in scored)
+    if top_score <= 0:
+        return []
+    floor = top_score * _SIMILARITY_KEEP_RATIO
+    selected = [(pos, chunk) for score, pos, chunk in scored if score >= floor]
+    selected.sort(key=lambda x: x[0])
+    return selected
+
+
+def _merge_criterion_evals(all_items: list[list[dict]]) -> list[dict]:
+    """Merge CriterionEvaluation dicts for the same category across multiple
+    sub-chunk calls, keyed by criterion name. Prefers a real finding over
+    'Not found', then higher marks_awarded, on conflict.
+    """
+    by_criterion: dict[str, dict] = {}
+    for items in all_items:
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            key = (item.get("criterion") or "").strip().lower()
+            if not key:
+                continue
+            existing = by_criterion.get(key)
+            if existing is None:
+                by_criterion[key] = item
+                continue
+            existing_found = existing.get("vendor_claim") not in (None, "", "Not found")
+            item_found = item.get("vendor_claim") not in (None, "", "Not found")
+            if item_found and not existing_found:
+                by_criterion[key] = item
+            elif item_found == existing_found:
+                if float(item.get("marks_awarded", 0) or 0) > float(existing.get("marks_awarded", 0) or 0):
+                    by_criterion[key] = item
+    return list(by_criterion.values())
+
+
 # ---------------------------------------------------------------------------
 # Stage 2 — Rule & Criteria Extraction
 # ---------------------------------------------------------------------------
@@ -621,27 +870,13 @@ def _deduplicate_scoring_categories(categories: list) -> list:
 
 
 async def stage2_extract_rules(rfp_text: str) -> EvaluationRules:
-    # Chunk 0: semantically most-relevant section (replaces regex anchor + keyword rank)
-    chunks = [await _extract_scoring_sections_semantic(rfp_text, MAX_RFP_CHARS)]
-    # Chunks 1-2: first 30K chars — eligibility criteria often appear near the start
-    for start in range(0, min(len(rfp_text), MAX_RFP_CHARS * 2), MAX_RFP_CHARS):
-        chunk = rfp_text[start: start + MAX_RFP_CHARS]
-        if chunk.strip():
-            chunks.append(chunk)
-    # Tail chunk: always include last MAX_RFP_CHARS for supporting docs appended at end
-    tail_start = max(0, len(rfp_text) - MAX_RFP_CHARS)
-    tail_chunk = rfp_text[tail_start:]
-    if tail_chunk.strip():
-        chunks.append(tail_chunk)
-    # Dedup by first 200 chars, hard-cap at 6 to keep total LLM calls to 1 batch
-    seen: set = set()
-    unique: list = []
-    for c in chunks:
-        key = c[:200]
-        if key not in seen:
-            seen.add(key)
-            unique.append(c)
-    chunks = unique[:6]
+    # Chunk count is derived from document size — a 20-page RFP might need
+    # 2 chunks, a 400-page one 30+. Every chunk covers a distinct, contiguous
+    # slice of the document, so nothing is silently dropped and there's
+    # nothing to dedupe (unlike the old overlapping-candidate-window design).
+    budget = _chunk_budget_tokens(max_tokens=2000, num_ctx=_num_ctx_for(MODEL_NAME))
+    chunks = _dynamic_chunks(rfp_text, budget)
+    print(f"[stage2_extract_rules] rfp_chars={len(rfp_text)} budget_tokens={budget} chunks={len(chunks)} sizes={[len(c) for c in chunks]}")
 
     # Merge categories from all chunks
     all_cats: dict[str, dict] = {}
@@ -865,6 +1100,10 @@ async def stage3_parse_vendor_response(
 
     Accepts optional rfp_scoring_text so the LLM can evaluate tiered marks directly.
     """
+    # Whichever model actually handles stage 3 (the override, if set) — used
+    # to size chunk budgets so they match that model's real context window.
+    stage3_model = STAGE3_MODEL_OVERRIDE or MODEL_NAME
+
     # Precompute bid-text chunk embeddings once, plus one query embedding per
     # category, in a single batched Ollama call. Every category then ranks
     # against these shared vectors instead of re-embedding the whole bid
@@ -891,31 +1130,41 @@ async def stage3_parse_vendor_response(
             _embed_chunks_cached(bid_doc_id, bid_raw_chunks),
         )
 
+    print(f"[stage3_parse_vendor_response] model={stage3_model} bid_chars={len(bid_text)} bid_embed_chunks={len(bid_raw_chunks)} categories={len(rules.scoring_categories)}")
+
     async def _eval_category(cat: ScoringCategory, cat_index: int) -> List[CriterionEvaluation]:
         evals: List[CriterionEvaluation] = []
         criteria_list = category_criteria_lists[cat_index]
         query_vec = query_vecs[cat_index]
-
         is_generic = not cat.subcriteria  # True when no specific subcriteria found
 
-        # For generic categories there's no narrow criteria set to match against,
-        # so use a larger window to ensure the LLM sees actual bid content.
-        # For specific-criteria categories the focused extraction is sufficient.
-        if is_generic:
-            relevant_bid = await _extract_bid_sections_semantic(
-                bid_raw_chunks, bid_positions, bid_chunk_vecs, query_vec,
-                bid_text, criteria_list, MAX_BID_CHARS_GENERIC,
+        # Keep every bid chunk above a relevance threshold — not a character
+        # cap — so nothing genuinely relevant is dropped just because there
+        # wasn't "room" in a fixed budget.
+        scored = [
+            (_cosine_sim(query_vec, vec), pos, chunk)
+            for vec, pos, chunk in zip(bid_chunk_vecs, bid_positions, bid_raw_chunks)
+        ]
+        relevant = _select_relevant_chunks(scored)
+        relevant_text = "\n".join(chunk for _, chunk in relevant)
+
+        if not relevant_text.strip():
+            # Nothing matched semantically (e.g. embeddings unavailable) — fall
+            # back to the keyword extractor rather than sending nothing.
+            relevant_text = _extract_bid_sections(
+                bid_text, criteria_list,
+                _chunk_budget_tokens(3000, num_ctx=_num_ctx_for(stage3_model)) * CHARS_PER_TOKEN
             )
-            # Also append a mid-document slice so content not near the start is reachable.
-            mid = len(bid_text) // 2
-            mid_slice = bid_text[mid: mid + 2000]
-            if mid_slice.strip() and mid_slice not in relevant_bid:
-                relevant_bid = relevant_bid + "\n\n[...mid-document excerpt...]\n" + mid_slice
-        else:
-            relevant_bid = await _extract_bid_sections_semantic(
-                bid_raw_chunks, bid_positions, bid_chunk_vecs, query_vec,
-                bid_text, criteria_list, MAX_BID_CHARS,
-            )
+
+        # If the relevant text is bigger than one call can hold, split it into
+        # multiple scoring calls and merge the results below — never truncate.
+        # Guarantee at least one call even when relevant_text is empty, so an
+        # empty-bid edge case still gets a real (likely "Not found") response
+        # instead of silently making zero calls.
+        budget = _chunk_budget_tokens(max_tokens=3000, num_ctx=_num_ctx_for(stage3_model))
+        sub_chunks = _dynamic_chunks(relevant_text, budget) or [relevant_text]
+        print(f"[stage3:{cat.category}] bid_chunks_matched={len(relevant)}/{len(scored)} relevant_chars={len(relevant_text)} sub_chunks={len(sub_chunks)}")
+
         # Detect whether this is a presentation/demo category that will be evaluated
         # during a future scheduled event. At bid stage, a detailed plan with committed
         # content and live-system evidence should be scored as 'Met', not 'Not Met'.
@@ -929,24 +1178,42 @@ async def stage3_parse_vendor_response(
             if rfp_scoring_text and not is_future_event else ""
         )
 
-        prompt = render_prompt(
-            "scoring_prompt",
-            category=cat.category,
-            max_marks=cat.max_marks,
-            qualification_type=cat.qualification_type,
-            is_generic=is_generic,
-            is_future_event=is_future_event,
-            has_rfp_scoring_text=bool(rfp_scoring_text),
-            today=today,
-            relevant_bid=relevant_bid,
-            rfp_context=rfp_context,
-            criteria_list_json=json.dumps(criteria_list, indent=2),
-        )
+        async def _call_one(sub_chunk: str) -> Optional[list]:
+            prompt = render_prompt(
+                "scoring_prompt",
+                category=cat.category,
+                max_marks=cat.max_marks,
+                qualification_type=cat.qualification_type,
+                is_generic=is_generic,
+                is_future_event=is_future_event,
+                has_rfp_scoring_text=bool(rfp_scoring_text),
+                today=today,
+                relevant_bid=sub_chunk,
+                rfp_context=rfp_context,
+                criteria_list_json=json.dumps(criteria_list, indent=2),
+            )
+            try:
+                items = _parse_array(await _call(prompt, max_tokens=3000, model=STAGE3_MODEL_OVERRIDE))
+                return items if isinstance(items, list) else []
+            except Exception:
+                return None  # distinct from "call succeeded, found nothing"
 
-        try:
-            items = _parse_array(await _call(prompt, max_tokens=3000))
-            if not isinstance(items, list):
-                items = []
+        sub_results = await asyncio.gather(*[_call_one(sc) for sc in sub_chunks])
+        any_success = any(r is not None for r in sub_results)
+        items = _merge_criterion_evals([r for r in sub_results if r])
+
+        if not any_success:
+            # Every sub-call actually failed (network/API error) — synthetic
+            # error rows. A legitimate empty result (model found nothing) is
+            # NOT an error and stays silently empty, same as before this change.
+            for c in criteria_list:
+                evals.append(CriterionEvaluation(
+                    criterion=c["criterion"], category=c["category"],
+                    max_marks=c["max_marks"], vendor_claim="Evaluation error",
+                    source_reference="Not found", compliance_status="Not Met",
+                    confidence="Low", justification="Parsing failed for this category.",
+                ))
+        else:
             for item in items:
                 if not isinstance(item, dict):
                     continue
@@ -960,14 +1227,7 @@ async def stage3_parse_vendor_response(
                     item["marks_awarded"] = 0.0
                 item.pop("is_mandatory", None)
                 evals.append(CriterionEvaluation(**item))
-        except Exception:
-            for c in criteria_list:
-                evals.append(CriterionEvaluation(
-                    criterion=c["criterion"], category=c["category"],
-                    max_marks=c["max_marks"], vendor_claim="Evaluation error",
-                    source_reference="Not found", compliance_status="Not Met",
-                    confidence="Low", justification="Parsing failed for this category.",
-                ))
+
         # Propagate qualification_type from the parent category so downstream
         # code (pq_checks derivation, risk synthesis) can filter PQ vs TQ.
         for ev in evals:
@@ -1210,8 +1470,8 @@ async def stage_extract_pq_criteria(rfp_text: str) -> list:
     """
     seen: set[str] = set()
     all_items: list = []
-    for start in range(0, min(len(rfp_text), MAX_RFP_CHARS * 2), MAX_RFP_CHARS):
-        chunk = rfp_text[start: start + MAX_RFP_CHARS]
+    for start in range(0, min(len(rfp_text), 30_000), 15_000):
+        chunk = rfp_text[start: start + 15_000]
         if not chunk.strip():
             continue
         try:
@@ -1233,7 +1493,7 @@ async def stage_evaluate_pq_criteria(bid_text: str, pq_criteria: list) -> list:
     """Evaluate each PQ criterion against the bid and return PQCheck objects."""
     if not pq_criteria:
         return []
-    chunk = bid_text[:MAX_BID_CHARS]
+    chunk = bid_text[:6_000]
     try:
         raw = await _call(_pq_evaluate_prompt(chunk, pq_criteria))
         items = _parse_array(raw)
@@ -1425,7 +1685,7 @@ async def run_full_evaluation(
         raise ValueError("NO_RULES_FOUND")
     if custom_threshold is not None:
         rules.threshold.overall_pass_mark = custom_threshold
-    rfp_scoring_text = await _extract_scoring_sections_semantic(rfp_for_scoring, MAX_RFP_CHARS)
+    rfp_scoring_text = await _extract_scoring_sections_semantic(rfp_for_scoring, RFP_SCORING_CONTEXT_CHARS)
     # pq_criteria=[] because PQ is already embedded in rules.scoring_categories
     # (weight_percent=0 for PQ so they don't inflate the TQ score)
     return await _run_pipeline(bid_text, rules, rfp_scoring_text, prebid_text=prebid_text, pq_criteria=[])
@@ -1442,29 +1702,13 @@ async def run_evaluation_with_rules(bid_text: str, rules: EvaluationRules) -> Ev
 
 async def stage2_extract_pqtq_rules(rfp_text: str) -> EvaluationRules:
     """Like stage2_extract_rules but scoped to PQ/TQ criteria only."""
-    # Chunk 0: semantically most-relevant section (replaces regex anchor + keyword rank)
-    chunks = [await _extract_scoring_sections_semantic(rfp_text, MAX_RFP_CHARS)]
-    for start in range(0, min(len(rfp_text), MAX_RFP_CHARS * 2), MAX_RFP_CHARS):
-        chunk = rfp_text[start: start + MAX_RFP_CHARS]
-        if chunk.strip():
-            chunks.append(chunk)
-    # Always include the tail of rfp_text so that additional documents appended at the end
-    # (e.g. an evaluation rule sheet uploaded via the "Additional Information" field) are
-    # covered even when the main RFP exceeds the 2×MAX_RFP_CHARS sequential window above.
-    tail_start = max(0, len(rfp_text) - MAX_RFP_CHARS)
-    tail_chunk = rfp_text[tail_start:]
-    if tail_chunk.strip():
-        chunks.append(tail_chunk)
-    seen: set = set()
-    unique: list = []
-    for c in chunks:
-        key = c[:200]
-        if key not in seen:
-            seen.add(key)
-            unique.append(c)
-    chunks = unique[:6]
+    # Chunk count is derived from document size — see stage2_extract_rules.
+    # Every chunk is a distinct, contiguous slice of the document, covering
+    # it end-to-end regardless of how long it is.
+    budget = _chunk_budget_tokens(max_tokens=2000, num_ctx=_num_ctx_for(MODEL_NAME))
+    chunks = _dynamic_chunks(rfp_text, budget)
 
-    print(f"[stage2_extract_pqtq_rules] {len(chunks)} chunks — sizes: {[len(c) for c in chunks]}")
+    print(f"[stage2_extract_pqtq_rules] rfp_chars={len(rfp_text)} budget_tokens={budget} chunks={len(chunks)} sizes={[len(c) for c in chunks]}")
     for idx, c in enumerate(chunks):
         print(f"  chunk[{idx}] starts: {c[:120]!r}")
 
@@ -1670,7 +1914,7 @@ async def run_pqtq_evaluation(
             else:
                 cat.qualification_type = "TQ"
 
-    rfp_scoring_text = await _extract_scoring_sections_semantic(rfp_text, MAX_RFP_CHARS)
+    rfp_scoring_text = await _extract_scoring_sections_semantic(rfp_text, RFP_SCORING_CONTEXT_CHARS)
     return await _run_pipeline(bid_text, rules, rfp_scoring_text)
 
 
