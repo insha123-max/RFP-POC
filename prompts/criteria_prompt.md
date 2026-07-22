@@ -12,6 +12,12 @@ Scoring tables may use column headers like: Max. Marks | Marks | Score | Points 
 Each ROW of this table becomes one scoring_category. Use the exact text from the criteria/description column as the category name.
 Use the numeric value in the marks/score/points column as max_marks. Do not modify these values.
 
+Do NOT extract from payment schedules, milestone-based payment/delivery tables, project
+timelines, or implementation plans — even when they list percentages or numbers (e.g.
+'Milestone 1 (D+1 Month): 10% payment', 'Milestone 3 (D+5 Months): 25%'). These describe when/how
+the vendor gets paid or delivers work, not technical-merit marks, and must never become a
+scoring_category, no matter how table-like they look.
+
 === RULE C — TIERED SCORING (MOST IMPORTANT) ===
 When a criterion has tiered/progressive marks (e.g. '1-3 projects=10 marks, 3-5 projects=20 marks, ≥5 projects=30 marks'),
 this is ONE scoring_category. Create EXACTLY ONE subcriterion that describes ALL tiers in its 'criterion' text.

@@ -12,9 +12,16 @@ Example: category='Minimum Annual Turnover', max_marks=1, qualification_type='PQ
 subcriteria=[{criterion:'Annual turnover >= Rs 4.5 crore in last 3 years', max_marks:1}]
 
 === RULE B — TQ SCORED CRITERIA ===
-Extract rows from the scoring table with explicit numeric marks/points/weightage.
+Extract rows ONLY from the formal bid EVALUATION / TECHNICAL SCORING table — the table whose
+purpose is to award marks that determine which bidder wins, usually under a heading like
+'Evaluation Criteria', 'Technical Scoring', 'Marking Scheme', 'Selection Criteria', or 'Section VII'.
 Set qualification_type='TQ' for ALL scored criteria.
 Copy criterion names and marks EXACTLY as written.
+
+Do NOT extract from payment schedules, milestone-based payment/delivery tables, project
+timelines, or implementation plans — even when they list percentages or numbers (e.g.
+'Milestone 1 (D+1 Month): 10% payment', 'Milestone 3 (D+5 Months): 25%'). These percentages are
+payment/delivery terms, not technical-merit marks, and must never become a scoring_category.
 
 === RULE C — HIERARCHICAL TABLES (categories with sub-criteria) ===
 If a scoring table has CATEGORY rows (e.g. 'Category A') and SUB-CRITERION rows within each:

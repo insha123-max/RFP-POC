@@ -54,6 +54,31 @@ if not MODEL_NAME:
 # sites via the `model=` kwarg. Unset/empty = always use MODEL_NAME.
 STAGE3_MODEL_OVERRIDE: Optional[str] = os.environ.get("STAGE3_MODEL_OVERRIDE") or None
 
+# Same mechanism for stage 2 (RFP rule/criteria extraction). Confirmed by a
+# direct side-by-side replay of the exact same RFP chunk: MODEL_NAME
+# (qwen3.5:4b) extracted only 1 of 3 scoring categories present in the
+# chunk (missed two worth 70% of the RFP's total marks), while gemma4:26b
+# extracted all of them correctly from the identical input — a model
+# capability gap, not a chunking bug. Stage 2 makes far fewer calls than
+# stage 3, so the extra latency cost of a bigger model here is cheap
+# relative to the accuracy it buys.
+STAGE2_MODEL_OVERRIDE: Optional[str] = os.environ.get("STAGE2_MODEL_OVERRIDE") or None
+
+
+def _llm_model_summary() -> str:
+    """Describes every model actually in play for traceability in the
+    report metadata — a silent single-model label here (when a stage
+    override is active) is exactly the kind of mismatch between what a
+    report says and what actually ran that made a past accuracy bug hard
+    to diagnose.
+    """
+    parts = [f"{MODEL_NAME} (default)"]
+    if STAGE2_MODEL_OVERRIDE and STAGE2_MODEL_OVERRIDE != MODEL_NAME:
+        parts.append(f"{STAGE2_MODEL_OVERRIDE} (stage2)")
+    if STAGE3_MODEL_OVERRIDE and STAGE3_MODEL_OVERRIDE != MODEL_NAME:
+        parts.append(f"{STAGE3_MODEL_OVERRIDE} (stage3)")
+    return parts[0] if len(parts) == 1 else " / ".join(parts)
+
 # Pinned so every LLM call is reproducible — seed + temperature=0.0 make the
 # same prompt + model produce the same output across runs.
 TEMPERATURE = 0.0
@@ -203,12 +228,23 @@ def get_http_client() -> httpx.AsyncClient:
     that Ollama's OpenAI-compat layer silently ignores extra_body's
     options.num_ctx (it always sizes to the model's native max context
     regardless of what's requested); the native API honors it correctly,
-    including shrinking an already-loaded model on request. No timeout —
-    generation can legitimately take minutes depending on load and chunk size.
+    including shrinking an already-loaded model on request.
+
+    A generous but finite read timeout (not None) is deliberate: generation
+    can legitimately take minutes under load, but timeout=None also means a
+    stale keep-alive connection left over from an Ollama server restart can
+    hang a request forever with zero GPU activity and no error — observed
+    directly during this project (a 45+ minute silent stall, immediately
+    resolved once retried against a fresh connection). 600s comfortably
+    exceeds the longest real call_time seen in practice (~300s) while still
+    bounding the worst case instead of hanging indefinitely.
     """
     global _http_client
     if _http_client is None:
-        _http_client = httpx.AsyncClient(base_url=OLLAMA_BASE_URL, timeout=None)
+        _http_client = httpx.AsyncClient(
+            base_url=OLLAMA_BASE_URL,
+            timeout=httpx.Timeout(connect=30.0, read=600.0, write=30.0, pool=30.0),
+        )
     return _http_client
 
 
@@ -315,14 +351,39 @@ def _parse_object(text: str) -> dict:
     try:
         return json.loads(candidate)
     except json.JSONDecodeError:
-        # Try truncating at the last complete key-value pair
-        last_comma = candidate.rfind(",")
-        if last_comma > 0:
-            try:
-                return json.loads(candidate[:last_comma] + "}")
-            except json.JSONDecodeError:
-                pass
-        return {}
+        pass
+
+    # Try truncating at the last complete key-value pair
+    last_comma = candidate.rfind(",")
+    if last_comma > 0:
+        try:
+            return json.loads(candidate[:last_comma] + "}")
+        except json.JSONDecodeError:
+            pass
+
+    # Response was cut off mid-structure (e.g. hit max_tokens before the
+    # array/object closed) — the raw text can still contain a real
+    # "rules_found": true plus fully-formed category objects earlier in the
+    # array. Don't discard that data just because the tail is broken: pull
+    # top-level scalars via regex and salvage whichever list entries are
+    # syntactically complete, the same way _parse_array recovers from
+    # truncated arrays.
+    salvaged: dict = {}
+    bool_match = re.search(r'"rules_found"\s*:\s*(true|false)', candidate)
+    if bool_match:
+        salvaged["rules_found"] = bool_match.group(1) == "true"
+    for list_key in ("scoring_categories", "criteria", "disqualifiers"):
+        list_match = re.search(rf'"{list_key}"\s*:\s*\[(.*)', candidate, re.DOTALL)
+        if list_match:
+            objects = _extract_complete_objects(list_match.group(1))
+            if objects:
+                salvaged[list_key] = objects
+    if salvaged:
+        print(
+            f"[_parse_object] response truncated — salvaged keys={list(salvaged.keys())} "
+            f"scoring_categories_recovered={len(salvaged.get('scoring_categories', []))}"
+        )
+    return salvaged
 
 
 def _extract_complete_objects(text: str) -> list:
@@ -719,19 +780,30 @@ async def _extract_bid_sections_semantic(
     return result if result.strip() else _extract_bid_sections(bid_text, criteria_list, max_chars)
 
 
-_SIMILARITY_KEEP_RATIO = 0.6
-# Keep any chunk scoring within 60% of this category's top-matching chunk,
-# instead of a character cap. A category with lots of genuinely relevant
-# content keeps more chunks; a narrow category keeps fewer. Nothing gets
-# dropped just because there wasn't "room" in a fixed budget.
+_SIMILARITY_KEEP_RATIO = 0.85
+# Keep chunks scoring within 85% of this category's top-matching chunk.
+# Raised from 0.6: measured in production, a ratio-only floor barely
+# discriminated at all for this embedding model — 522-524 of 524 bid
+# chunks passed at 0.6, meaning nearly the entire document was resent
+# per category. Real bid text apparently doesn't spread cosine similarity
+# out enough for a relative floor alone to be reliable.
+
+_MAX_RELEVANT_CHUNKS = 60
+# Hard cap on chunks kept per category, applied after ranking by score —
+# a backstop for exactly the flat-similarity-distribution case above,
+# where even a stricter ratio might not filter enough on its own. 60
+# chunks (~36,000 chars before any sub-chunk splitting) is still ~6x more
+# than the old fixed MAX_BID_CHARS budget that caused missed evidence, so
+# this isn't a return to that bug — it's bounding the *top* of the range,
+# not reintroducing a narrow cutoff.
 
 
 def _select_relevant_chunks(
     scored: list[tuple[float, int, str]],
 ) -> list[tuple[int, str]]:
     """scored: (similarity, position, chunk_text) for every chunk in the
-    document. Returns every chunk above a dynamic relevance floor, in
-    document order — no count/character cap.
+    document. Returns the top-ranked chunks above a relevance floor, capped
+    at _MAX_RELEVANT_CHUNKS, restored to document order.
     """
     if not scored:
         return []
@@ -739,7 +811,10 @@ def _select_relevant_chunks(
     if top_score <= 0:
         return []
     floor = top_score * _SIMILARITY_KEEP_RATIO
-    selected = [(pos, chunk) for score, pos, chunk in scored if score >= floor]
+    candidates = [(score, pos, chunk) for score, pos, chunk in scored if score >= floor]
+    candidates.sort(key=lambda x: -x[0])
+    candidates = candidates[:_MAX_RELEVANT_CHUNKS]
+    selected = [(pos, chunk) for _, pos, chunk in candidates]
     selected.sort(key=lambda x: x[0])
     return selected
 
@@ -810,6 +885,266 @@ def _base_cat_key(key: str) -> str:
     return key
 
 
+_NON_SCORING_NAME_PATTERNS = [
+    r'^\s*milestone\b',
+    r'\bpayment\s+schedule\b',
+    r'\bpayment\s+milestone\b',
+    r'\bdelivery\s+milestone\b',
+    r'\bdisbursement\s+schedule\b',
+]
+
+
+def _drop_non_scoring_categories(raw_cats: list) -> list:
+    """Drop categories whose name identifies them as a payment/delivery schedule
+    rather than a genuine technical-evaluation scoring criterion.
+
+    Proven failure mode: an RFP's milestone-based payment table (e.g. "Milestone 1
+    (D+1 Month): 10%", "Milestone 3 (D+5 Months): 25%") has numeric percentages
+    that look exactly like a scoring table, so Stage 2 extracted each milestone as
+    its own 100%-scorable TQ category — any bidder who simply restates the RFP's
+    own payment schedule earns full marks on all of them, fabricating a large
+    fraction of the final score out of criteria the RFP never intended to score.
+    """
+    kept = []
+    for item in raw_cats:
+        name = item[0].get("category", "")
+        if any(re.search(p, name, re.IGNORECASE) for p in _NON_SCORING_NAME_PATTERNS):
+            print(f"[Stage2] Dropping non-scoring category (payment/delivery schedule, not TQ marks): {name!r}")
+            continue
+        kept.append(item)
+    return kept
+
+
+_RFP_DECLARED_TOTAL_PATTERNS = [
+    r'out\s+of\s+(\d+)\s*marks',
+    r'maximum\s+marks?\s*(?:of|is|:)?\s*(\d+)',
+    r'total\s+marks?\s*(?:of|is|:)?\s*(\d+)',
+    r'marked\s+out\s+of\s+(\d+)',
+    r'evaluation\s+(?:shall\s+be\s+)?(?:out\s+of|marked\s+out\s+of)\s+(\d+)',
+]
+
+
+def _detect_rfp_declared_total_marks(rfp_text: str) -> Optional[float]:
+    """Find the RFP's own stated total technical-evaluation marks (e.g. this
+    RFP literally says "70 marks (out of 100 marks) in the Technical
+    Evaluation"), so the TQ category merge step has a ground-truth anchor to
+    sanity-check against instead of just trusting one LLM pass.
+    """
+    counts: dict[int, int] = {}
+    for pattern in _RFP_DECLARED_TOTAL_PATTERNS:
+        for m in re.finditer(pattern, rfp_text, re.IGNORECASE):
+            try:
+                val = int(m.group(1))
+            except (ValueError, IndexError):
+                continue
+            if 10 <= val <= 1000:  # plausible marks-total range, filters out unrelated numbers
+                counts[val] = counts.get(val, 0) + 1
+    if not counts:
+        return None
+    # Most frequently repeated candidate wins — a real declared total is usually stated more than once.
+    return float(max(counts, key=counts.get))
+
+
+async def _run_tq_merge_pass(all_cats: dict, stage2_model: str) -> bool:
+    """Single LLM pass that spots TQ categories describing the same underlying
+    RFP criterion extracted twice under different wording (e.g. "Firm's
+    Relevant Experience" and "Number of Similar Projects (>= Rs 2 Crore each)"
+    both describing the same 30-mark line item). Mutates all_cats in place.
+    Returns True if any merge was applied.
+
+    _base_cat_key's prefix matching can't catch this — the names share no
+    common substring. An embedding-cosine-similarity check was tried and
+    rejected: measured against real category names, the true duplicate pair
+    scored 0.62 similarity while two genuinely DIFFERENT criteria ("Employee
+    Certifications" vs "Firm's Relevant Experience") scored higher at 0.87 —
+    short RFP-jargon phrases cluster too tightly by domain vocabulary for a
+    threshold to safely distinguish "same criterion" from "different criterion,
+    same topic". Only a model reading the full list together, with the same
+    context a human evaluator would have, can make this call reliably.
+    """
+    tq_keys = [
+        k for k, cat in all_cats.items()
+        if str(cat.get("qualification_type", "") or "").upper() == "TQ"
+    ]
+    if len(tq_keys) < 2:
+        return False
+
+    name_to_key = {all_cats[k].get("category", k): k for k in tq_keys}
+    categories_for_prompt = []
+    for k in tq_keys:
+        cat = all_cats[k]
+        subs = cat.get("subcriteria", [])
+        sub_descriptions = [
+            s.get("criterion", "") for s in subs if isinstance(s, dict) and s.get("criterion")
+        ] if isinstance(subs, list) else []
+        categories_for_prompt.append({
+            "category": cat.get("category", k),
+            "max_marks": cat.get("max_marks"),
+            "subcriteria": sub_descriptions,
+        })
+
+    raw = await _call(
+        render_prompt("merge_duplicate_tq_categories_prompt", categories_json=json.dumps(categories_for_prompt, indent=2)),
+        max_tokens=800,
+        model=stage2_model,
+    )
+    data = _parse_object(raw)
+    merge_groups = data.get("merge_groups", [])
+    if not isinstance(merge_groups, list) or not merge_groups:
+        return False
+
+    merged_any = False
+    for group in merge_groups:
+        if not isinstance(group, dict):
+            continue
+        canonical_name = group.get("canonical", "")
+        canonical_key = name_to_key.get(canonical_name)
+        if canonical_key is None:
+            continue
+        for dup_name in group.get("duplicates", []) or []:
+            dup_key = name_to_key.get(dup_name)
+            if dup_key is None or dup_key == canonical_key or dup_key not in all_cats:
+                continue
+            dup_subs = all_cats[dup_key].get("subcriteria", [])
+            if isinstance(dup_subs, list):
+                canon_subs = all_cats[canonical_key].get("subcriteria", [])
+                if not isinstance(canon_subs, list):
+                    canon_subs = []
+                all_cats[canonical_key]["subcriteria"] = canon_subs + dup_subs
+            print(f"[Stage2] Merged duplicate TQ category {dup_name!r} into {canonical_name!r}")
+            del all_cats[dup_key]
+            merged_any = True
+
+    return merged_any
+
+
+def _tq_marks_total(all_cats: dict) -> float:
+    """Sum max_marks across TQ categories, falling back to summing subcriteria
+    marks when a category's own top-level max_marks is 0 — mirrors the same
+    fallback the later raw_cats construction step uses, so this sanity-check
+    total isn't a false alarm just because a category left max_marks unset at
+    the top level while still fully specifying marks in its subcriteria.
+    """
+    total = 0.0
+    for cat in all_cats.values():
+        if str(cat.get("qualification_type", "") or "").upper() != "TQ":
+            continue
+        mm = float(cat.get("max_marks") or 0)
+        if mm == 0:
+            subs = cat.get("subcriteria", [])
+            if isinstance(subs, list):
+                mm = sum(float(s.get("max_marks") or 0) for s in subs if isinstance(s, dict))
+        total += mm
+    return total
+
+
+async def _merge_duplicate_tq_categories(all_cats: dict, stage2_model: str, rfp_text: str = "") -> dict:
+    """Run the TQ duplicate-merge pass, then sanity-check the result against
+    the RFP's own declared total marks (when detectable) and retry once if the
+    total still doesn't match — this LLM-based merge is not perfectly
+    deterministic run-to-run (proven empirically: the same duplicate was
+    caught on one run and missed on the next, most likely from GPU batching
+    non-determinism under concurrent load), so a single pass isn't enough to
+    trust on its own when correctness stakes are high.
+    """
+    await _run_tq_merge_pass(all_cats, stage2_model)
+
+    declared_total = _detect_rfp_declared_total_marks(rfp_text) if rfp_text else None
+    if declared_total is None:
+        return all_cats
+
+    current_total = _tq_marks_total(all_cats)
+    if current_total == declared_total:
+        return all_cats
+
+    print(
+        f"[Stage2] TQ marks total ({current_total:.0f}) doesn't match RFP's declared total "
+        f"({declared_total:.0f}) after merge pass — retrying merge check once more"
+    )
+    merged_again = await _run_tq_merge_pass(all_cats, stage2_model)
+    new_total = _tq_marks_total(all_cats)
+    if new_total == declared_total:
+        print(f"[Stage2] Retry resolved the mismatch — TQ total now matches declared {declared_total:.0f}")
+    elif merged_again:
+        print(f"[Stage2] Retry merged more categories but total ({new_total:.0f}) still doesn't match declared {declared_total:.0f}")
+    else:
+        print(f"[Stage2] Retry found no further merges — TQ total ({new_total:.0f}) remains off from declared {declared_total:.0f}, proceeding as-is")
+
+    return all_cats
+
+
+async def _cleanup_pq_categories(all_cats: dict, model: str) -> dict:
+    """Ask the LLM to review PQ eligibility conditions for two problems a
+    keyword/name match can't reliably catch, because both require understanding
+    what each condition actually MEANS, not just what it's called:
+
+    1. True duplicates — the same eligibility gate stated twice, once as the
+       requirement and once as the document that proves it (e.g. "turnover >=
+       Rs 4.5 Cr" and "submit CA-certified turnover data" are the same gate).
+    2. Items that aren't real bidder-eligibility gates at all — functional
+       requirements about the proposed SYSTEM's behaviour, or descriptive text
+       spilled over from a different (TQ scoring) section of the RFP, that got
+       mistakenly extracted as if they were pass/fail PQ conditions.
+
+    Tested empirically against qwen3.5:4b (the smaller default model) vs this
+    model: the smaller model caught the non-eligibility drops reliably but
+    missed the subtler requirement-vs-proof-document merges — same capability
+    gap already proven for Stage 2 extraction. Use whichever model the caller
+    passes in (normally STAGE2_MODEL_OVERRIDE) rather than hardcoding one.
+    """
+    pq_keys = [
+        k for k, cat in all_cats.items()
+        if str(cat.get("qualification_type", "") or "").upper() == "PQ"
+    ]
+    if len(pq_keys) < 2:
+        return all_cats
+
+    name_to_key = {all_cats[k].get("category", k): k for k in pq_keys}
+    categories_for_prompt = []
+    for k in pq_keys:
+        cat = all_cats[k]
+        subs = cat.get("subcriteria", [])
+        req_text = [
+            s.get("criterion", "") for s in subs if isinstance(s, dict) and s.get("criterion")
+        ] if isinstance(subs, list) else []
+        categories_for_prompt.append({"category": cat.get("category", k), "requirement_text": req_text})
+
+    raw = await _call(
+        render_prompt("pq_intent_cleanup_prompt", categories_json=json.dumps(categories_for_prompt, indent=2)),
+        max_tokens=1200,
+        model=model,
+    )
+    data = _parse_object(raw)
+
+    for group in data.get("merge_groups", []) or []:
+        if not isinstance(group, dict):
+            continue
+        canonical_name = group.get("canonical", "")
+        canonical_key = name_to_key.get(canonical_name)
+        if canonical_key is None:
+            continue
+        for dup_name in group.get("duplicates", []) or []:
+            dup_key = name_to_key.get(dup_name)
+            if dup_key is None or dup_key == canonical_key or dup_key not in all_cats:
+                continue
+            dup_subs = all_cats[dup_key].get("subcriteria", [])
+            if isinstance(dup_subs, list):
+                canon_subs = all_cats[canonical_key].get("subcriteria", [])
+                if not isinstance(canon_subs, list):
+                    canon_subs = []
+                all_cats[canonical_key]["subcriteria"] = canon_subs + dup_subs
+            print(f"[Stage2] Merged duplicate PQ condition {dup_name!r} into {canonical_name!r}")
+            del all_cats[dup_key]
+
+    for name in data.get("not_eligibility_conditions", []) or []:
+        key = name_to_key.get(name)
+        if key is not None and key in all_cats:
+            print(f"[Stage2] Dropping non-eligibility PQ item (not a real bidder pass/fail gate): {name!r}")
+            del all_cats[key]
+
+    return all_cats
+
+
 def _deduplicate_scoring_categories(categories: list) -> list:
     """Remove sub-criterion entries that are already accounted for inside a parent category.
 
@@ -870,13 +1205,16 @@ def _deduplicate_scoring_categories(categories: list) -> list:
 
 
 async def stage2_extract_rules(rfp_text: str) -> EvaluationRules:
+    # Whichever model actually handles stage 2 (the override, if set).
+    stage2_model = STAGE2_MODEL_OVERRIDE or MODEL_NAME
+
     # Chunk count is derived from document size — a 20-page RFP might need
     # 2 chunks, a 400-page one 30+. Every chunk covers a distinct, contiguous
     # slice of the document, so nothing is silently dropped and there's
     # nothing to dedupe (unlike the old overlapping-candidate-window design).
-    budget = _chunk_budget_tokens(max_tokens=2000, num_ctx=_num_ctx_for(MODEL_NAME))
+    budget = _chunk_budget_tokens(max_tokens=4000, num_ctx=_num_ctx_for(stage2_model))
     chunks = _dynamic_chunks(rfp_text, budget)
-    print(f"[stage2_extract_rules] rfp_chars={len(rfp_text)} budget_tokens={budget} chunks={len(chunks)} sizes={[len(c) for c in chunks]}")
+    print(f"[stage2_extract_rules] model={stage2_model} rfp_chars={len(rfp_text)} budget_tokens={budget} chunks={len(chunks)} sizes={[len(c) for c in chunks]}")
 
     # Merge categories from all chunks
     all_cats: dict[str, dict] = {}
@@ -886,7 +1224,7 @@ async def stage2_extract_rules(rfp_text: str) -> EvaluationRules:
     any_explicit_rules = False
 
     chunk_results = await asyncio.gather(
-        *[_call(_rfp_extract_prompt(c), max_tokens=2000) for c in chunks],
+        *[_call(_rfp_extract_prompt(c), max_tokens=4000, model=stage2_model) for c in chunks],
         return_exceptions=True,
     )
     for raw in chunk_results:
@@ -983,6 +1321,8 @@ async def stage2_extract_rules(rfp_text: str) -> EvaluationRules:
             print(f"[Stage2 chunk] error: {e}")
             continue
 
+    all_cats = await _merge_duplicate_tq_categories(all_cats, stage2_model, rfp_text)
+
     # Normalise weights to sum to 100
     raw_cats = []
     for cat in all_cats.values():
@@ -1019,6 +1359,8 @@ async def stage2_extract_rules(rfp_text: str) -> EvaluationRules:
             scoring_raw.append(item)
     raw_cats = scoring_raw
     # ─────────────────────────────────────────────────────────────────────────
+
+    raw_cats = _drop_non_scoring_categories(raw_cats)
 
     total_w = sum(w for _, _, w in raw_cats)
     if total_w > 0:
@@ -1586,7 +1928,7 @@ async def _run_pipeline(
         prebid_qa=prebid_qa,
         prebid_applied=prebid_applied,
         metadata=EvaluationMetadata(
-            llm_model=MODEL_NAME,
+            llm_model=_llm_model_summary(),
             embed_model=_EMBED_MODEL,
             temperature=TEMPERATURE,
             seed=SEED,
@@ -1702,13 +2044,15 @@ async def run_evaluation_with_rules(bid_text: str, rules: EvaluationRules) -> Ev
 
 async def stage2_extract_pqtq_rules(rfp_text: str) -> EvaluationRules:
     """Like stage2_extract_rules but scoped to PQ/TQ criteria only."""
+    stage2_model = STAGE2_MODEL_OVERRIDE or MODEL_NAME
+
     # Chunk count is derived from document size — see stage2_extract_rules.
     # Every chunk is a distinct, contiguous slice of the document, covering
     # it end-to-end regardless of how long it is.
-    budget = _chunk_budget_tokens(max_tokens=2000, num_ctx=_num_ctx_for(MODEL_NAME))
+    budget = _chunk_budget_tokens(max_tokens=4000, num_ctx=_num_ctx_for(stage2_model))
     chunks = _dynamic_chunks(rfp_text, budget)
 
-    print(f"[stage2_extract_pqtq_rules] rfp_chars={len(rfp_text)} budget_tokens={budget} chunks={len(chunks)} sizes={[len(c) for c in chunks]}")
+    print(f"[stage2_extract_pqtq_rules] model={stage2_model} rfp_chars={len(rfp_text)} budget_tokens={budget} chunks={len(chunks)} sizes={[len(c) for c in chunks]}")
     for idx, c in enumerate(chunks):
         print(f"  chunk[{idx}] starts: {c[:120]!r}")
 
@@ -1718,7 +2062,7 @@ async def stage2_extract_pqtq_rules(rfp_text: str) -> EvaluationRules:
     any_explicit_rules = False
 
     chunk_results = await asyncio.gather(
-        *[_call(_rfp_pqtq_prompt(c), max_tokens=2000) for c in chunks],
+        *[_call(_rfp_pqtq_prompt(c), max_tokens=4000, model=stage2_model) for c in chunks],
         return_exceptions=True,
     )
     for raw in chunk_results:
@@ -1796,6 +2140,9 @@ async def stage2_extract_pqtq_rules(rfp_text: str) -> EvaluationRules:
             print(f"[Stage2-PQTQ chunk] error: {e}")
             continue
 
+    all_cats = await _merge_duplicate_tq_categories(all_cats, stage2_model, rfp_text)
+    all_cats = await _cleanup_pq_categories(all_cats, stage2_model)
+
     raw_cats = []
     for cat in all_cats.values():
         mm = float(cat.get("max_marks") or 0)
@@ -1809,6 +2156,8 @@ async def stage2_extract_pqtq_rules(rfp_text: str) -> EvaluationRules:
             wp = mm
         if mm > 0:
             raw_cats.append((cat, mm, wp))
+
+    raw_cats = _drop_non_scoring_categories(raw_cats)
 
     # PQ categories are pass/fail eligibility gates — they must NOT contribute to the
     # weighted TQ score. Normalize TQ weights to sum to 100; PQ gets weight_percent=0.

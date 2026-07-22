@@ -26,6 +26,8 @@ REQUIRED_PROMPTS = [
     "criteria_prompt",
     "pq_criteria_prompt",
     "pqtq_criteria_prompt",
+    "merge_duplicate_tq_categories_prompt",
+    "pq_intent_cleanup_prompt",
     "scoring_prompt",
     "pq_scoring_prompt",
     "risk_prompt",
