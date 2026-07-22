@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import sys
 import uuid
 from datetime import datetime, timezone
 from typing import Any, List, Optional
@@ -10,6 +11,29 @@ from typing import Any, List, Optional
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# Duplicate every print()/logging line to backend.log as well as the console,
+# so evaluation output survives a restart and can be shared without needing to
+# manually redirect uvicorn's output.
+_LOG_FILE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "backend.log")
+
+
+class _TeeStream:
+    def __init__(self, *streams):
+        self._streams = streams
+
+    def write(self, data):
+        for stream in self._streams:
+            stream.write(data)
+
+    def flush(self):
+        for stream in self._streams:
+            stream.flush()
+
+
+_log_file = open(_LOG_FILE_PATH, "a", buffering=1, encoding="utf-8")
+sys.stdout = _TeeStream(sys.stdout, _log_file)
+sys.stderr = _TeeStream(sys.stderr, _log_file)
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware

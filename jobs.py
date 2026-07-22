@@ -202,11 +202,14 @@ async def _process_job(job_id: str) -> None:
     if job_type is None:
         return
 
+    print(f"\n===== [{datetime.now(timezone.utc).isoformat()}] START job {job_id} ({job_type}) =====")
+
     try:
         report_dict, score, passed = await _run_pipeline_for_job(job_type, payload)
     except Exception as exc:
         logger.exception("Job %s (%s) failed", job_id, job_type)
         await asyncio.to_thread(_mark_failed, job_id, _error_message(job_type, exc))
+        print(f"===== [{datetime.now(timezone.utc).isoformat()}] FAILED job {job_id} ({job_type}) =====\n")
         return
 
     await asyncio.to_thread(
@@ -215,6 +218,7 @@ async def _process_job(job_id: str) -> None:
         payload.get("rfp_name"), payload.get("bid_name"),
         job_type, payload.get("documents"),
     )
+    print(f"===== [{datetime.now(timezone.utc).isoformat()}] SUCCESS job {job_id} ({job_type}) =====\n")
 
 
 async def _run_and_release(job_id: str) -> None:
