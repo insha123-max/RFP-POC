@@ -5,7 +5,11 @@ services:
       - "1500:8000"
     environment:
       - OLLAMA_BASE_URL=http://172.30.111.58:11434
-      - DATABASE_URL=postgresql://postgres:admin@db:5432/bideval
+      - MODEL_NAME=qwen3.5:4b
+      - STAGE2_MODEL_OVERRIDE=gemma4:26b
+      - STAGE3_MODEL_OVERRIDE=gemma4:26b
+      - NUM_CTX_CEILING=16384
+      - DATABASE_URL=postgresql://bideval:admin@db:5432/bideval
       - JWT_SECRET=change-me-use-a-strong-secret-in-production
       # Comma-separated allow-list — these @globallogic.com emails get role="admin" at signup.
       - ADMIN_EMAILS=
