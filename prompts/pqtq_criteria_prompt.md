@@ -43,6 +43,22 @@ Set rules_found=true if scoring_categories is non-empty (any PQ or TQ criteria f
 Set rules_found=false ONLY if no criteria of any kind were found in this chunk.
 Never invent marks. Never use eligibility thresholds (e.g. Rs 4.5 Cr) as numeric scores.
 
+=== RULE F — OVERALL / CATEGORY PASS MARKS ===
+Separately from the scoring table, RFPs often state, in prose, the minimum a bidder must
+score to qualify/proceed — e.g. "A Bidder must get a minimum of 70 marks (out of 100 marks)
+in the Technical Evaluation to proceed", "Bidders scoring at least 70% shall be considered
+technically qualified", "minimum of 60 marks required to qualify".
+- If THIS CHUNK contains such a sentence stating an OVERALL minimum TQ score across the whole
+  scoring table, extract that number into threshold.overall_pass_mark. If stated as a
+  percentage of a 100-mark scale, use the number as-is; if the total isn't 100, convert to
+  the equivalent out of 100.
+- If it instead states a minimum for one SPECIFIC TQ scoring category only (e.g. "Firm's
+  Relevant Experience: minimum 15 out of 30 marks required"), add
+  {"category":"<exact category name>","min_percent":<minimum as % of that category's max>}
+  to threshold.category_minimums instead.
+- If this chunk contains no such statement, leave overall_pass_mark=0 and
+  category_minimums=[] — do not guess or infer a number that isn't explicitly stated.
+
 Return ONLY JSON:
 {"rules_found":true,"scoring_categories":[{"category":"Name","max_marks":30,"weight_percent":30,"qualification_type":"TQ","subcriteria":[{"criterion":"<description>","max_marks":30}]}],"threshold":{"overall_pass_mark":70,"category_minimums":[]}}
 

@@ -63,6 +63,22 @@ HIERARCHICAL EXAMPLE — RFP with Category A (55), Category B (20), Category C (
   WRONG: Creating 'Criterion 1 (40)' and 'Criterion 2 (15)' as separate scoring_categories — those are intermediate, not top-level.
   WRONG: Creating 13 scoring_categories (parent + all children) summing to 215.
 
+=== RULE G — OVERALL / CATEGORY PASS MARKS ===
+Separately from the scoring table, RFPs often state, in prose, the minimum a bidder must
+score to qualify/proceed — e.g. "A Bidder must get a minimum of 70 marks (out of 100 marks)
+in the Technical Evaluation to proceed", "Bidders scoring at least 70% shall be considered
+technically qualified", "minimum of 60 marks required to qualify".
+- If THIS CHUNK contains such a sentence stating an OVERALL minimum score across the whole
+  scoring table, extract that number into threshold.overall_pass_mark. If stated as a
+  percentage of a 100-mark scale, use the number as-is; if the total isn't 100, convert to
+  the equivalent out of 100.
+- If it instead states a minimum for one SPECIFIC scoring category only (e.g. "Firm's
+  Relevant Experience: minimum 15 out of 30 marks required"), add
+  {"category":"<exact category name>","min_percent":<minimum as % of that category's max>}
+  to threshold.category_minimums instead.
+- If this chunk contains no such statement, leave overall_pass_mark=0 and
+  category_minimums=[] — do not guess or infer a number that isn't explicitly stated.
+
 Return ONLY JSON:
 {"rules_found":true,"scoring_categories":[{"category":"<exact name>","max_marks":55,"weight_percent":55,"subcriteria":[{"criterion":"<leaf sub-criterion name>","max_marks":20},{"criterion":"<next leaf>","max_marks":10}]}],"threshold":{"overall_pass_mark":70,"category_minimums":[]}}
 
