@@ -127,7 +127,7 @@ def _migrate_schema():
 app = FastAPI(
     title="RFP Evaluator",
     version="1.0.0",
-    on_startup=[_create_tables, _migrate_schema, validate_prompts, jobs.start_worker],
+    on_startup=[_create_tables, _migrate_schema, validate_prompts, jobs.recover_orphaned_jobs, jobs.start_worker],
     on_shutdown=[jobs.stop_worker],
 )
 

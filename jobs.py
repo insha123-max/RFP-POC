@@ -193,6 +193,34 @@ def _error_message(job_type: str, exc: Exception) -> str:
     return f"Evaluation failed: {exc}"
 
 
+def _recover_orphaned_jobs() -> int:
+    """Fail any job left in "running" when the process starts.
+
+    A fresh process means nothing is actually executing that job any more —
+    it was orphaned by a prior crash/restart/kill while mid-flight, and
+    _claim_next_job() only ever looks at "queued" jobs, so it would
+    otherwise sit there forever and the dashboard's processing banner would
+    never clear.
+    """
+    db = SessionLocal()
+    try:
+        stuck = db.execute(select(Job).where(Job.status == "running")).scalars().all()
+        for job in stuck:
+            job.status = "failed"
+            job.error_message = "Interrupted by a server restart. Please resubmit this evaluation."
+            job.finished_at = datetime.now(timezone.utc)
+        db.commit()
+        return len(stuck)
+    finally:
+        db.close()
+
+
+async def recover_orphaned_jobs() -> None:
+    count = await asyncio.to_thread(_recover_orphaned_jobs)
+    if count:
+        logger.warning("Recovered %d job(s) orphaned by a previous process restart", count)
+
+
 # ---------------------------------------------------------------------------
 # Worker loop
 # ---------------------------------------------------------------------------
